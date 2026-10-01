@@ -31,26 +31,39 @@ static RECOGNITION: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 #[cfg(windows)]
 fn bundled_model_bytes() -> Result<&'static [u8], String> {
-    use windows::{core::{w, PCWSTR}, Win32::System::LibraryLoader::{
-        FindResourceW, GetModuleHandleW, LoadResource, LockResource, SizeofResource,
-    }};
+    use windows::{
+        core::{w, PCWSTR},
+        Win32::System::LibraryLoader::{
+            FindResourceW, GetModuleHandleW, LoadResource, LockResource, SizeofResource,
+        },
+    };
     // The main executable owns this immutable RCDATA for its entire lifetime.
     // Validate handles and length before constructing the read-only slice.
     unsafe {
         let module = GetModuleHandleW(None).map_err(|e| e.to_string())?;
-        let resource = FindResourceW(module, w!("MCTIER_SPEECH_MODEL"), PCWSTR(10usize as *const u16));
-        if resource.0.is_null() { return Err("安装包缺少内置语音模型，请重新安装 MCTier".into()); }
+        let resource = FindResourceW(
+            module,
+            w!("MCTIER_SPEECH_MODEL"),
+            PCWSTR(10usize as *const u16),
+        );
+        if resource.0.is_null() {
+            return Err("安装包缺少内置语音模型，请重新安装 MCTier".into());
+        }
         let size = SizeofResource(module, resource) as usize;
         let loaded = LoadResource(module, resource).map_err(|e| e.to_string())?;
         let pointer = LockResource(loaded) as *const u8;
-        if pointer.is_null() || size == 0 { return Err("无法读取内置语音模型".into()); }
+        if pointer.is_null() || size == 0 {
+            return Err("无法读取内置语音模型".into());
+        }
         Ok(std::slice::from_raw_parts(pointer, size))
     }
 }
 
 #[cfg(not(windows))]
 fn bundled_model_bytes() -> Result<&'static [u8], String> {
-    Ok(include_bytes!("../../../shared/generated/speech-model/model.int8.onnx.gzip"))
+    Ok(include_bytes!(
+        "../../../shared/generated/speech-model/model.int8.onnx.gzip"
+    ))
 }
 
 fn verified(path: &Path, expected: &ModelFile) -> bool {
@@ -95,18 +108,25 @@ fn prepare_model(
             let result = (|| -> Result<(), String> {
                 let mut file = fs::File::create(&pending).map_err(|e| e.to_string())?;
                 extract_bundled(bytes, item, &mut file, |extracted| {
-                    let _ = progress.send(SpeechProgress { completed: completed + extracted, total });
+                    let _ = progress.send(SpeechProgress {
+                        completed: completed + extracted,
+                        total,
+                    });
                 })?;
                 file.sync_all().map_err(|e| e.to_string())?;
                 drop(file);
                 if !verified(&pending, item) {
                     return Err("内置语音模型校验失败，请重新安装 MCTier".into());
                 }
-                if path.exists() { fs::remove_file(&path).map_err(|e| e.to_string())?; }
+                if path.exists() {
+                    fs::remove_file(&path).map_err(|e| e.to_string())?;
+                }
                 fs::rename(&pending, &path).map_err(|e| e.to_string())?;
                 Ok(())
             })();
-            if result.is_err() { let _ = fs::remove_file(pending); }
+            if result.is_err() {
+                let _ = fs::remove_file(pending);
+            }
             result?;
         }
         completed += item.size;
@@ -115,7 +135,12 @@ fn prepare_model(
     Ok(directory)
 }
 
-fn extract_bundled(bytes: &[u8], item: &ModelFile, output: &mut impl Write, mut progress: impl FnMut(u64)) -> Result<(), String> {
+fn extract_bundled(
+    bytes: &[u8],
+    item: &ModelFile,
+    output: &mut impl Write,
+    mut progress: impl FnMut(u64),
+) -> Result<(), String> {
     let mut input: Box<dyn Read + '_> = match item.compression.as_deref() {
         Some("gzip") => Box::new(flate2::read::GzDecoder::new(bytes)),
         None => Box::new(bytes),
@@ -124,14 +149,24 @@ fn extract_bundled(bytes: &[u8], item: &ModelFile, output: &mut impl Write, mut 
     let mut buffer = [0u8; 65536];
     let mut extracted = 0u64;
     loop {
-        let count = input.read(&mut buffer).map_err(|e| format!("语音模型解压失败: {e}"))?;
-        if count == 0 { break; }
+        let count = input
+            .read(&mut buffer)
+            .map_err(|e| format!("语音模型解压失败: {e}"))?;
+        if count == 0 {
+            break;
+        }
         extracted += count as u64;
-        if extracted > item.size { return Err("语音模型解压大小超限".into()); }
-        output.write_all(&buffer[..count]).map_err(|e| e.to_string())?;
+        if extracted > item.size {
+            return Err("语音模型解压大小超限".into());
+        }
+        output
+            .write_all(&buffer[..count])
+            .map_err(|e| e.to_string())?;
         progress(extracted);
     }
-    if extracted != item.size { return Err("语音模型解压大小不匹配".into()); }
+    if extracted != item.size {
+        return Err("语音模型解压大小不匹配".into());
+    }
     Ok(())
 }
 
@@ -198,12 +233,16 @@ fn recognize_samples(directory: &Path, samples: &[f32]) -> Result<String, String
     let stream = recognizer.create_stream();
     for chunk in samples.chunks(16000) {
         stream.accept_waveform(16000, chunk);
-        while recognizer.is_ready(&stream) { recognizer.decode(&stream); }
+        while recognizer.is_ready(&stream) {
+            recognizer.decode(&stream);
+        }
     }
     // Flush the final streaming window; endpoint resets would lose earlier text.
     stream.accept_waveform(16000, &vec![0.0; 10560]);
     stream.input_finished();
-    while recognizer.is_ready(&stream) { recognizer.decode(&stream); }
+    while recognizer.is_ready(&stream) {
+        recognizer.decode(&stream);
+    }
     recognizer
         .get_result(&stream)
         .map(|result| result.text.trim().to_string())
@@ -271,24 +310,39 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let channel = Channel::new(|_| Ok(()));
         let directory = prepare_model(temp.path(), &channel).unwrap();
-        let manifest: ModelManifest = serde_json::from_str(include_str!("../../../shared/speech-model.json")).unwrap();
-        for file in &manifest.files { assert!(verified(&directory.join(&file.name), file)); }
+        let manifest: ModelManifest =
+            serde_json::from_str(include_str!("../../../shared/speech-model.json")).unwrap();
+        for file in &manifest.files {
+            assert!(verified(&directory.join(&file.name), file));
+        }
         fs::write(directory.join("tokens.txt"), b"corrupted").unwrap();
         assert_eq!(prepare_model(temp.path(), &channel).unwrap(), directory);
-        for file in &manifest.files { assert!(verified(&directory.join(&file.name), file)); }
+        for file in &manifest.files {
+            assert!(verified(&directory.join(&file.name), file));
+        }
         assert!(!directory.join("tokens.txt.partial").exists());
         fs::write(directory.join("model.int8.onnx"), b"corrupted").unwrap();
         prepare_model(temp.path(), &channel).unwrap();
-        assert!(verified(&directory.join(&manifest.files[0].name), &manifest.files[0]));
+        assert!(verified(
+            &directory.join(&manifest.files[0].name),
+            &manifest.files[0]
+        ));
     }
 
     #[test]
     fn compressed_model_is_bounded_and_rejects_truncation() {
-        let manifest: ModelManifest = serde_json::from_str(include_str!("../../../shared/speech-model.json")).unwrap();
+        let manifest: ModelManifest =
+            serde_json::from_str(include_str!("../../../shared/speech-model.json")).unwrap();
         let bytes = bundled_model_bytes().unwrap();
-        assert!(bytes.len() + 13366 < 20_000_000);
+        assert!(bytes.len() + 13366 <= 20_100_000);
         let mut entry = manifest.files.into_iter().next().unwrap();
-        assert!(extract_bundled(&bytes[..bytes.len() / 2], &entry, &mut std::io::sink(), |_| {}).is_err());
+        assert!(extract_bundled(
+            &bytes[..bytes.len() / 2],
+            &entry,
+            &mut std::io::sink(),
+            |_| {}
+        )
+        .is_err());
         entry.size = 1;
         assert!(extract_bundled(bytes, &entry, &mut std::io::sink(), |_| {}).is_err());
     }

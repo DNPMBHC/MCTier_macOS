@@ -269,10 +269,17 @@ pub async fn check_virtual_adapter() -> Result<bool, String> {
         Ok(has_adapter)
     }
 
-    #[cfg(not(any(windows, target_os = "linux")))]
+    // macOS：EasyTier 通常使用 utun 接口；不把任意 VPN 接口当成组网成功。
+    #[cfg(target_os = "macos")]
     {
-        // 其余平台尚未适配虚拟网卡检测，返回 true 避免阻断流程
-        Ok(true)
+        let has_adapter = crate::modules::macos_platform::has_virtual_adapter()?;
+        log::info!("虚拟网卡检查结果: {}", has_adapter);
+        Ok(has_adapter)
+    }
+
+    #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
+    {
+        Err("当前平台尚未实现虚拟网卡检测".to_string())
     }
 }
 
@@ -309,9 +316,15 @@ pub async fn check_firewall_rules() -> Result<bool, String> {
         Ok(allowed)
     }
 
-    #[cfg(not(any(windows, target_os = "linux")))]
+    #[cfg(target_os = "macos")]
     {
+        log::info!("macOS 使用系统网络防火墙；MCTier 不自动修改防火墙规则");
         Ok(true)
+    }
+
+    #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
+    {
+        Err("当前平台尚未实现防火墙检查".to_string())
     }
 }
 
@@ -377,10 +390,16 @@ pub async fn add_firewall_rules(app_handle: tauri::AppHandle) -> Result<String, 
         crate::modules::linux_platform::add_firewall_rules().await
     }
 
-    #[cfg(not(any(windows, target_os = "linux")))]
+    #[cfg(target_os = "macos")]
     {
         let _ = app_handle;
-        Ok("当前平台无需配置防火墙".to_string())
+        Err("macOS 防火墙需要在系统设置中允许 MCTier 的网络访问".to_string())
+    }
+
+    #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
+    {
+        let _ = app_handle;
+        Err("当前平台尚未实现防火墙配置".to_string())
     }
 }
 
@@ -402,7 +421,13 @@ pub async fn restart_as_admin(app_handle: tauri::AppHandle) -> Result<(), String
         Ok(())
     }
 
-    #[cfg(not(any(windows, target_os = "linux")))]
+    #[cfg(target_os = "macos")]
+    {
+        let _ = app_handle;
+        Err("macOS 不支持以管理员身份重启整个应用；请在系统设置中授予网络扩展权限".to_string())
+    }
+
+    #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
     {
         let _ = app_handle;
         Err("当前平台不支持".to_string())
@@ -441,11 +466,22 @@ pub async fn ping_virtual_ip(ip: String) -> Result<bool, String> {
             .map_err(|e| format!("执行 ping 失败: {}", e))?
     };
 
-    #[cfg(not(windows))]
+    #[cfg(target_os = "macos")]
+    let output = Command::new(unix_system_command("ping")?)
+        .args(["-c", "2", "-W", "1000", &target])
+        .output()
+        .map_err(|e| format!("执行 ping 失败: {}", e))?;
+
+    #[cfg(all(unix, not(target_os = "macos")))]
     let output = Command::new(unix_system_command("ping")?)
         .args(["-c", "2", "-W", "1", &target])
         .output()
         .map_err(|e| format!("执行 ping 失败: {}", e))?;
+
+    #[cfg(not(any(windows, unix)))]
+    {
+        return Err("当前平台不支持 ping".to_string());
+    }
 
     let success = output.status.success();
     log::info!("Ping 结果: {}", success);
@@ -561,7 +597,13 @@ pub async fn set_auto_start(enable: bool) -> Result<(), String> {
         crate::modules::linux_platform::set_auto_start(enable)
     }
 
-    #[cfg(not(any(windows, target_os = "linux")))]
+    // macOS：写入用户级 LaunchAgent。
+    #[cfg(target_os = "macos")]
+    {
+        crate::modules::macos_platform::set_auto_start(enable)
+    }
+
+    #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
     {
         let _ = enable;
         log::warn!("当前平台不支持开机自启动设置");
@@ -603,7 +645,12 @@ pub async fn check_auto_start() -> Result<bool, String> {
         Ok(crate::modules::linux_platform::auto_start_enabled())
     }
 
-    #[cfg(not(any(windows, target_os = "linux")))]
+    #[cfg(target_os = "macos")]
+    {
+        Ok(crate::modules::macos_platform::auto_start_enabled())
+    }
+
+    #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
     {
         Ok(false)
     }

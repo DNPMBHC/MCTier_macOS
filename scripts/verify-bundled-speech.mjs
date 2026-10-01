@@ -42,5 +42,5 @@ for (const entry of manifest.files) {
   if (!found) throw new Error(`EXE does not contain verified ${entry.name}`);
   console.log(`${name}: ${bytes.length} bytes verified inside EXE`);
 }
-if (bundledBytes > manifest.maxBundledBytes) throw new Error(`Model bundle exceeds 20 MB: ${bundledBytes}`);
+if (bundledBytes > manifest.maxBundledBytes) throw new Error(`Model bundle exceeds ${manifest.maxBundledBytes} bytes: ${bundledBytes}`);
 console.log(`Bundled model total: ${bundledBytes} bytes; offline extraction SHA-256 verified.`);

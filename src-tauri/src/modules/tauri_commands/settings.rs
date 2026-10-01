@@ -371,7 +371,12 @@ pub async fn get_settings(state: State<'_, AppState>) -> Result<serde_json::Valu
             crate::modules::linux_platform::auto_start_enabled()
         }
 
-        #[cfg(not(any(windows, target_os = "linux")))]
+        #[cfg(target_os = "macos")]
+        {
+            crate::modules::macos_platform::auto_start_enabled()
+        }
+
+        #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
         {
             false
         }

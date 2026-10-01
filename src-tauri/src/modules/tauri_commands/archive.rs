@@ -69,7 +69,10 @@ pub(crate) fn ensure_no_link_components(path: &std::path::Path) -> Result<(), St
     for component in path.components() {
         current.push(component.as_os_str());
         match std::fs::symlink_metadata(&current) {
-            Ok(metadata) if is_symlink_or_reparse_point(&metadata) => {
+            Ok(metadata)
+                if is_symlink_or_reparse_point(&metadata)
+                    && !is_macos_system_path_alias(&current) =>
+            {
                 return Err(format!("拒绝经过符号链接或重解析点: {}", current.display()));
             }
             Ok(_) => {}

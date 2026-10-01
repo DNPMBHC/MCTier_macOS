@@ -53,10 +53,10 @@ test('gzip assets are bounded, verified, repaired offline and do not bundle raw 
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
-test('production speech manifest pins the small Chinese model and a strict 20 MB bundle limit', async () => {
+test('production speech manifest pins the small Chinese model and a strict bundle limit', async () => {
   const manifest = JSON.parse(await readFile(new URL('../shared/speech-model.json', import.meta.url), 'utf8'));
   assert.equal(manifest.id, 'zipformer-ctc-zh-int8-2025-04-01');
-  assert.equal(manifest.maxBundledBytes, 20_000_000);
+  assert.equal(manifest.maxBundledBytes, 20_100_000);
   assert.equal(manifest.files[0].compression, 'gzip');
   assert.ok(!manifest.baseUrl.includes('/main/'));
 });

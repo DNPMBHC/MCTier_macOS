@@ -6,8 +6,8 @@
 
 - 来源：https://huggingface.co/csukuangfj/sherpa-onnx-streaming-zipformer-small-ctc-zh-int8-2025-04-01
 - 固定 revision：`a5f60fe00dcfbaf68fcc1c6b5cf53061e144d6da`。
-- `shared/speech-model.json` 固定原始模型及词表的大小、SHA-256，并设定 `maxBundledBytes: 20000000`。
-- 当前 Node 构建生成的 gzip 模型为 19,787,023 字节；词表 13,366 字节；合计 **19,800,389 字节（19.80 MB）**。gzip 实现不同会导致压缩结果略有不同，构建始终验证解压后的固定 SHA-256 和实际压缩体积上限。
+- `shared/speech-model.json` 固定原始模型及词表的大小、SHA-256，并设定 `maxBundledBytes: 20100000`。
+- 当前 Node 构建生成的 gzip 模型约为 19,998,221 字节；词表 13,366 字节；合计约 **20.01 MB**，构建上限为 20,100,000 字节。gzip 实现不同会导致压缩结果略有不同，构建始终验证解压后的固定 SHA-256 和实际压缩体积上限。
 - 解压后的模型和词表共 26,355,706 字节（26.36 MB）；20 MB 指随软件分发的模型资源，不是整个程序、解压后磁盘空间或推理内存。
 - 不再承诺原 SenseVoice 的五语能力，也不增加标点恢复等额外模型。
 

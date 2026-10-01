@@ -118,7 +118,8 @@
         ]
       }
     },
-    "withGlobalTauri": false
+    "withGlobalTauri": false,
+    "macOSPrivateApi": true
   },
   "plugins": {
     "shell": {
@@ -132,7 +133,7 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["nsis"],
+    "targets": ["nsis", "dmg", "deb", "appimage"],
     "icon": [
       "icons/32x32.png",
       "icons/64x64.png",
@@ -154,6 +155,12 @@
       },
       "allowDowngrades": false,
       "wix": null
+    },
+    "macOS": {
+      "minimumSystemVersion": "11.0",
+      "signingIdentity": null,
+      "providerShortName": null,
+      "entitlements": null
     },
     "linux": {
       "deb": {
@@ -180,7 +187,8 @@
       "../THIRD_PARTY_NOTICES.md": "licenses/THIRD_PARTY_NOTICES.md",
       "../licenses/*": "licenses/",
       "../patches/easytier-2.6.0-mctier-android.patch": "licenses/patches/easytier-2.6.0-mctier-android.patch",
-      "../shared/builtin-emoji/builtin-v3.pack.gz": "builtin-emoji/builtin-v3.pack.gz"
+      "../shared/builtin-emoji/builtin-v3.pack.gz": "builtin-emoji/builtin-v3.pack.gz",
+      "resources/binaries/macos": "binaries/macos"
     },
     "copyright": "Copyright © 2024-2026 QingYun Studio_PengMingHang (MCTier Team)",
     "category": "Game",

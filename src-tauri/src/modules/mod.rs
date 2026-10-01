@@ -78,3 +78,7 @@ pub mod speech_transcription;
 // Linux 平台支撑（TUN 文件能力 / 网卡检测 / 防火墙 / XDG 自启动）
 #[cfg(target_os = "linux")]
 pub mod linux_platform;
+
+// macOS 平台支撑（网卡检测 / LaunchAgent 自启动）
+#[cfg(target_os = "macos")]
+pub mod macos_platform;

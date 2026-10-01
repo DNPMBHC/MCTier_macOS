@@ -382,11 +382,35 @@ pub(crate) fn ensure_existing_path_has_no_links(path: &std::path::Path) -> Resul
         current.push(component.as_os_str());
         let metadata = std::fs::symlink_metadata(&current)
             .map_err(|e| format!("检查路径失败 {}: {}", current.display(), e))?;
-        if is_symlink_or_reparse_point(&metadata) {
+        if is_symlink_or_reparse_point(&metadata) && !is_macos_system_path_alias(&current) {
             return Err(format!("拒绝经过符号链接或重解析点: {}", current.display()));
         }
     }
     Ok(())
+}
+
+pub(crate) fn is_macos_system_path_alias(path: &std::path::Path) -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        // macOS exposes these fixed system aliases for their /private targets.
+        // Native temporary-directory APIs commonly return the aliased spelling.
+        const ALIASES: [(&str, &str); 3] = [
+            ("/etc", "/private/etc"),
+            ("/tmp", "/private/tmp"),
+            ("/var", "/private/var"),
+        ];
+        return ALIASES.iter().any(|(alias, target)| {
+            path == std::path::Path::new(alias)
+                && std::fs::canonicalize(path)
+                    .is_ok_and(|canonical| canonical == std::path::Path::new(target))
+        });
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = path;
+        false
+    }
 }
 
 pub(crate) fn register_path_grant(

@@ -8,11 +8,12 @@
   <p>
     <img src="https://img.shields.io/badge/version-3.7.0-blue?style=flat-square" alt="Version">
     <img src="https://img.shields.io/badge/Windows-10%20%2F%2011-2ea44f?style=flat-square" alt="Windows 10/11">
+    <img src="https://img.shields.io/badge/macOS-preview-555555?style=flat-square" alt="macOS preview">
     <img src="https://img.shields.io/badge/Android-supported-3ddc84?style=flat-square" alt="Android">
     <img src="https://img.shields.io/badge/license-Custom-orange?style=flat-square" alt="License">
   </p>
 
-  **支持 Windows 10/11 与 Android。电脑端和手机端可加入同一个大厅，快速组成跨网络虚拟局域网。**
+  **支持 Windows 10/11、macOS（预览）与 Android。电脑端和手机端可加入同一个大厅，快速组成跨网络虚拟局域网。**
 
   [GitHub](https://github.com/pmh1314520/MCTier) · [Gitee](https://gitee.com/peng-minghang/mctier) · [快速开始](#快速开始) · [运行预览](#运行预览) · [赞助支持](#赞助支持)
 
@@ -181,6 +182,7 @@ MCTier 基于 EasyTier 与 WebRTC，用来把不同网络环境下的设备组�
 | 平台 | 要求 |
 | --- | --- |
 | Windows | Windows 10/11 64 位，建议 2GB 以上内存 |
+| macOS（预览） | macOS 11+，Apple Silicon 优先；需要已准备的 EasyTier Mach-O 二进制 |
 | Linux | Debian 家族发行版（Debian / Ubuntu / Deepin / UOS / Mint），x86_64 |
 | Android | Android 手机或平板，建议 Android 8.0+ |
 | 网络 | 能访问所配置的 EasyTier 节点与 WebRTC 信令服务 |
@@ -192,6 +194,7 @@ MCTier 基于 EasyTier 与 WebRTC，用来把不同网络环境下的设备组�
 - Windows 安装包：下载 `MCTier_x.y.z_x64-setup.exe` 后双击安装。
 - Windows 便携版：下载 `MCTier.exe` 后直接运行。
 - Android：下载 `MCTier-Android.apk` 后在手机上安装。
+- macOS（预览）：在 macOS 机器上运行 `./MCTier-macOS/scripts/build.sh --ui-only` 可先构建 UI 包；要启用虚拟组网，需准备对应架构的 EasyTier Mach-O 文件并运行 `./MCTier-macOS/scripts/fetch-binaries.sh` 校验。当前脚本不从 Linux ELF 自动回退，未签名/未公证包仅用于本机测试。
 - Linux（Debian 家族）：构建与打包方式见 [MCTier-Linux/README.md](MCTier-Linux/README.md)。应用本体以普通用户运行，只需为 `easytier-core` 授予一次 `cap_net_admin` 能力；语音、屏幕共享与远程控制在标准 Debian 上暂不可用，逐项状态见该目录的状态矩阵。
 
 ### 创建或加入大厅
@@ -265,6 +268,34 @@ npm run tauri build -- --bundles nsis --ci
 ```
 
 桌面端的发布构建只生成 NSIS 安装包，避免同时生成 MSI 时重复处理离线 WebView2 安装器。仓库中的一键版本更新工具会自动准备固定 Node，并使用相同的 NSIS 参数。
+
+#### macOS 预览构建
+
+本次 macOS 适配贡献与一键 DMG 构建入口维护于
+[DNPMBHC/MCTier_macOS](https://github.com/DNPMBHC/MCTier_macOS)。原 MCTier 作者、版权和许可证信息保持不变。
+
+macOS 端提供源码构建脚本，会从锁定的 EasyTier v2.5.0 commit 自动构建对应架构的 Mach-O 文件：
+
+```bash
+./MCTier-macOS/scripts/build-easytier.sh
+./MCTier-macOS/scripts/fetch-binaries.sh
+./MCTier-macOS/scripts/build.sh
+```
+
+脚本会校验源码 commit、目标架构、Mach-O 类型、`--version` 输出和 SHA-256，并且只在校验完成后安装到资源目录。也可以用 `--source /path/to/EasyTier` 复用已审计的本地源码目录。完整构建会在缺少二进制时自动调用该源码构建脚本；`--ui-only` 仍用于不含组网能力的 UI 验证包。
+
+```bash
+./MCTier-macOS/scripts/fetch-binaries.sh
+./MCTier-macOS/scripts/build.sh
+```
+
+若只需验证 macOS UI 和 app bundle，可在没有 EasyTier 二进制时运行：
+
+```bash
+./MCTier-macOS/scripts/build.sh --ui-only
+```
+
+`--ui-only` 不提供虚拟组网、ComfyUI 远程访问或端口转发能力。正式分发还需要 Apple Developer ID 签名和 notarization；未签名构建仅用于本机测试。
 
 Android 端源码位于：
 

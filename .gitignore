@@ -48,6 +48,14 @@ src-tauri/WixTools
 # 与 Windows 二进制同理：第三方产物、体积大，构建前用
 # MCTier-Linux/scripts/fetch-binaries.sh 获取并校验 SHA-256。
 src-tauri/resources/binaries/linux/
+# macOS EasyTier binaries are reproducible third-party build outputs; keep only
+# the architecture directories and .gitkeep files in the repository.
+src-tauri/resources/binaries/macos/*/easytier-core
+src-tauri/resources/binaries/macos/*/easytier-cli
+src-tauri/resources/binaries/macos/*/target/
+MCTier-macOS/build-logs/
+MCTier-macOS/*.log
+MCTier-macOS/*.dmg
 
 # Config directories
 config_mctier-*
