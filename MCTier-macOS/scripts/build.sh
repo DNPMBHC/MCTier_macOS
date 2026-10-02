@@ -38,6 +38,8 @@ command -v npm >/dev/null 2>&1 || fail '缺少 npm'
 command -v cargo >/dev/null 2>&1 || fail '缺少 Rust cargo。请先安装 rustup 和 stable toolchain。'
 command -v rustc >/dev/null 2>&1 || fail '缺少 Rust rustc。请先安装 rustup 和 stable toolchain。'
 command -v xcrun >/dev/null 2>&1 || fail '缺少 Xcode Command Line Tools'
+# 3.8.0 起聊天图片优化依赖 turbojpeg-sys，它在 macOS 上从源码构建，需要 cmake。
+command -v cmake >/dev/null 2>&1 || fail '缺少 cmake（turbojpeg-sys 需要从源码构建）。请先执行 brew install cmake。'
 
 case "$(uname -m)" in
   arm64) TARGET="aarch64-apple-darwin" ;;
