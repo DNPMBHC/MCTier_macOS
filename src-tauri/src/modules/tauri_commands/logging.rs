@@ -1,3 +1,6 @@
+// Only the Windows branches use `windows_system_command` from shared; other
+// platforms open logs via the default handler and reference nothing here.
+#[cfg(target_os = "windows")]
 use super::shared::*;
 
 /// 打开日志文件所在的文件夹

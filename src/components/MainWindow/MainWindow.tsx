@@ -17,6 +17,8 @@ import { tl } from '../../i18n';
 import { DOWNLOAD_WEBSITE } from '../../services/version/versionPolicy';
 import './MainWindow.css';
 
+const isMacOS = /Mac|iPhone|iPad|iPod/.test(navigator.platform);
+
 const { Title, Paragraph } = Typography;
 
 /**
@@ -232,10 +234,10 @@ export const MainWindow: React.FC = () => {
   }
 
   return (
-    <div className={`main-window ${!enableGpuRendering ? 'gpu-rendering-disabled' : ''}`}>
-      {/* 拖拽区域 - 只在顶部 */}
+    <div className={`main-window ${isMacOS ? 'macos-desktop-window' : ''} ${!enableGpuRendering ? 'gpu-rendering-disabled' : ''}`}>
+      {/* 拖拽区域 - macOS 原生标题栏已包含交通灯；其他平台保留自绘控制区 */}
       <div className="main-window-drag-area" data-tauri-drag-region>
-        <div className="main-window-controls">
+        {!isMacOS && <div className="main-window-controls">
           <button className="main-window-control-btn" onClick={handleMinimizeToTray} title={tl('最小化到系统托盘', 'Minimize to system tray')}>
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true">
               <path d="M5 12h14" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" />
@@ -244,7 +246,7 @@ export const MainWindow: React.FC = () => {
           <button className="main-window-control-btn main-window-close-btn" onClick={handleCloseMainWindow} title={tl('关闭 MCTier', 'Close MCTier')}>
             <CloseIcon size={16} />
           </button>
-        </div>
+        </div>}
       </div>
       
       <motion.div
@@ -283,6 +285,7 @@ export const MainWindow: React.FC = () => {
         </motion.div>
 
         <motion.div
+          className="main-window-actions"
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.4, duration: 0.4 }}

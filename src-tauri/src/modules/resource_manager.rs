@@ -53,21 +53,26 @@ const EASYTIER_CLI_FILE: &str = "easytier-cli";
 fn macos_arch_name() -> &'static str {
     #[cfg(target_arch = "aarch64")]
     {
-        return "aarch64-apple-darwin";
+        "aarch64-apple-darwin"
     }
     #[cfg(target_arch = "x86_64")]
     {
-        return "x86_64-apple-darwin";
+        "x86_64-apple-darwin"
     }
-    "unsupported"
+    #[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64")))]
+    {
+        "unsupported"
+    }
 }
 
-#[cfg(target_os = "linux")]
+// Only used by `find_debug_binary`, which is itself `#[cfg(debug_assertions)]`;
+// release bundles resolve native binaries from the app bundle instead.
+#[cfg(all(debug_assertions, target_os = "linux"))]
 fn platform_binary_dir() -> String {
     "linux".to_string()
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(all(debug_assertions, target_os = "macos"))]
 fn platform_binary_dir() -> String {
     format!("macos/{}", macos_arch_name())
 }
@@ -465,6 +470,7 @@ impl ResourceManager {
         if let Some(resource_path) = app_handle.path().resource_dir().ok() {
             let path = resource_path
                 .join("binaries")
+                .join("macos")
                 .join(macos_arch_name())
                 .join(filename);
             if fs::symlink_metadata(&path).ok().is_some_and(|metadata| {

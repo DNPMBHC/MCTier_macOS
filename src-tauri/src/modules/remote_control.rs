@@ -180,6 +180,10 @@ pub fn authorize_remote_input(
     controller_id: String,
 ) -> Result<(), String> {
     ensure_main_window(&window)?;
+    #[cfg(target_os = "macos")]
+    if !macos_core_graphics::accessibility_trusted() {
+        return Err("macOS Accessibility permission required: open System Settings > Privacy & Security > Accessibility".to_string());
+    }
     let mut authorization = remote_input_authorization()
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
@@ -212,6 +216,12 @@ pub fn remote_inject_input(
     ensure_main_window(&window)?;
     validate_remote_identity(&session_id, &controller_id)?;
     validate_remote_input_events(&events)?;
+    #[cfg(target_os = "macos")]
+    {
+        if !macos_core_graphics::accessibility_trusted() {
+            return Err("macOS Accessibility permission required: open System Settings > Privacy & Security > Accessibility".to_string());
+        }
+    }
     {
         let mut authorization = remote_input_authorization()
             .lock()
@@ -228,7 +238,11 @@ pub fn remote_inject_input(
     {
         linux_uinput::inject(&events)
     }
-    #[cfg(not(any(target_os = "windows", target_os = "linux")))]
+    #[cfg(target_os = "macos")]
+    {
+        macos_core_graphics::inject(&events)
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "linux", target_os = "macos")))]
     {
         let _ = events;
         Err("远程控制注入暂不支持当前平台".to_string())
@@ -288,6 +302,312 @@ mod remote_input_security_tests {
             }])
             .is_err()
         );
+    }
+}
+
+#[cfg(target_os = "macos")]
+mod macos_core_graphics {
+    use super::RemoteInputEvent;
+    use core_graphics::event::{
+        CGEvent, CGEventTapLocation, CGEventType, CGMouseButton, KeyCode, ScrollEventUnit,
+    };
+    use core_graphics::event_source::{CGEventSource, CGEventSourceStateID};
+    use core_graphics::geometry::CGPoint;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    const WHEEL_SCALE: f64 = 10.0;
+
+    // 像 Linux 被控端一样，未映射键码只告警一次，避免刷屏。
+    static UNSUPPORTED_KEY_LOGGED: AtomicBool = AtomicBool::new(false);
+
+    pub fn accessibility_trusted() -> bool {
+        #[link(name = "ApplicationServices", kind = "framework")]
+        extern "C" {
+            // 返回的是 CoreFoundation Boolean（unsigned char）；先用 u8 承接再比较，
+            // 不能直接声明成 Rust bool——非 0/1 字节具现化为 bool 属未定义行为。
+            fn AXIsProcessTrusted() -> u8;
+        }
+        unsafe { AXIsProcessTrusted() != 0 }
+    }
+
+    fn source() -> Result<CGEventSource, String> {
+        CGEventSource::new(CGEventSourceStateID::CombinedSessionState)
+            .map_err(|_| "无法创建 macOS 输入事件源".to_string())
+    }
+
+    fn point(x: f64, y: f64) -> CGPoint {
+        let bounds = core_graphics::display::CGDisplay::main().bounds();
+        CGPoint::new(
+            bounds.origin.x + x.clamp(0.0, 1.0) * bounds.size.width,
+            bounds.origin.y + y.clamp(0.0, 1.0) * bounds.size.height,
+        )
+    }
+
+    fn mouse_button(button: u8) -> Result<CGMouseButton, String> {
+        match button {
+            0 => Ok(CGMouseButton::Left),
+            1 => Ok(CGMouseButton::Center),
+            2 => Ok(CGMouseButton::Right),
+            _ => Err("远程鼠标按键无效".to_string()),
+        }
+    }
+
+    fn keycode(code: u32) -> Option<u16> {
+        Some(match code {
+            0x41 => KeyCode::ANSI_A,
+            0x42 => KeyCode::ANSI_B,
+            0x43 => KeyCode::ANSI_C,
+            0x44 => KeyCode::ANSI_D,
+            0x45 => KeyCode::ANSI_E,
+            0x46 => KeyCode::ANSI_F,
+            0x47 => KeyCode::ANSI_G,
+            0x48 => KeyCode::ANSI_H,
+            0x49 => KeyCode::ANSI_I,
+            0x4A => KeyCode::ANSI_J,
+            0x4B => KeyCode::ANSI_K,
+            0x4C => KeyCode::ANSI_L,
+            0x4D => KeyCode::ANSI_M,
+            0x4E => KeyCode::ANSI_N,
+            0x4F => KeyCode::ANSI_O,
+            0x50 => KeyCode::ANSI_P,
+            0x51 => KeyCode::ANSI_Q,
+            0x52 => KeyCode::ANSI_R,
+            0x53 => KeyCode::ANSI_S,
+            0x54 => KeyCode::ANSI_T,
+            0x55 => KeyCode::ANSI_U,
+            0x56 => KeyCode::ANSI_V,
+            0x57 => KeyCode::ANSI_W,
+            0x58 => KeyCode::ANSI_X,
+            0x59 => KeyCode::ANSI_Y,
+            0x5A => KeyCode::ANSI_Z,
+            0x30 => KeyCode::ANSI_0,
+            0x31 => KeyCode::ANSI_1,
+            0x32 => KeyCode::ANSI_2,
+            0x33 => KeyCode::ANSI_3,
+            0x34 => KeyCode::ANSI_4,
+            0x35 => KeyCode::ANSI_5,
+            0x36 => KeyCode::ANSI_6,
+            0x37 => KeyCode::ANSI_7,
+            0x38 => KeyCode::ANSI_8,
+            0x39 => KeyCode::ANSI_9,
+            0x08 => KeyCode::DELETE,
+            0x09 => KeyCode::TAB,
+            0x0D => KeyCode::RETURN,
+            0x1B => KeyCode::ESCAPE,
+            0x20 => KeyCode::SPACE,
+            0x25 => KeyCode::LEFT_ARROW,
+            0x26 => KeyCode::UP_ARROW,
+            0x27 => KeyCode::RIGHT_ARROW,
+            0x28 => KeyCode::DOWN_ARROW,
+            0x2D => KeyCode::HELP,
+            0x24 => KeyCode::HOME,
+            0x23 => KeyCode::END,
+            0x21 => KeyCode::PAGE_UP,
+            0x22 => KeyCode::PAGE_DOWN,
+            0x70 => KeyCode::F1,
+            0x71 => KeyCode::F2,
+            0x72 => KeyCode::F3,
+            0x73 => KeyCode::F4,
+            0x74 => KeyCode::F5,
+            0x75 => KeyCode::F6,
+            0x76 => KeyCode::F7,
+            0x77 => KeyCode::F8,
+            0x78 => KeyCode::F9,
+            0x79 => KeyCode::F10,
+            0x7A => KeyCode::F11,
+            0x7B => KeyCode::F12,
+            // 修饰键（控制端发左右两套 VK，分别映射到 macOS 左右修饰键）
+            0x14 => KeyCode::CAPS_LOCK,
+            0xA0 => KeyCode::SHIFT,
+            0xA1 => KeyCode::RIGHT_SHIFT,
+            0xA2 => KeyCode::CONTROL,
+            0xA3 => KeyCode::RIGHT_CONTROL,
+            0xA4 => KeyCode::OPTION,
+            0xA5 => KeyCode::RIGHT_OPTION,
+            0x5B => KeyCode::COMMAND,
+            0x5C => KeyCode::RIGHT_COMMAND,
+            // 前删除键（VK_DELETE）；0x08 退格已映射到 macOS 的 DELETE（退格）
+            0x2E => KeyCode::FORWARD_DELETE,
+            // 符号键
+            0xC0 => KeyCode::ANSI_GRAVE,
+            0xBD => KeyCode::ANSI_MINUS,
+            0xBB => KeyCode::ANSI_EQUAL,
+            0xDB => KeyCode::ANSI_LEFT_BRACKET,
+            0xDD => KeyCode::ANSI_RIGHT_BRACKET,
+            0xDC => KeyCode::ANSI_BACKSLASH,
+            0xBA => KeyCode::ANSI_SEMICOLON,
+            0xDE => KeyCode::ANSI_QUOTE,
+            0xBC => KeyCode::ANSI_COMMA,
+            0xBE => KeyCode::ANSI_PERIOD,
+            0xBF => KeyCode::ANSI_SLASH,
+            // 小键盘
+            0x60 => KeyCode::ANSI_KEYPAD_0,
+            0x61 => KeyCode::ANSI_KEYPAD_1,
+            0x62 => KeyCode::ANSI_KEYPAD_2,
+            0x63 => KeyCode::ANSI_KEYPAD_3,
+            0x64 => KeyCode::ANSI_KEYPAD_4,
+            0x65 => KeyCode::ANSI_KEYPAD_5,
+            0x66 => KeyCode::ANSI_KEYPAD_6,
+            0x67 => KeyCode::ANSI_KEYPAD_7,
+            0x68 => KeyCode::ANSI_KEYPAD_8,
+            0x69 => KeyCode::ANSI_KEYPAD_9,
+            0x6A => KeyCode::ANSI_KEYPAD_MULTIPLY,
+            0x6B => KeyCode::ANSI_KEYPAD_PLUS,
+            0x6D => KeyCode::ANSI_KEYPAD_MINUS,
+            0x6E => KeyCode::ANSI_KEYPAD_DECIMAL,
+            0x6F => KeyCode::ANSI_KEYPAD_DIVIDE,
+            0x90 => KeyCode::ANSI_KEYPAD_CLEAR,
+            // 其余（PrintScreen/ScrollLock/Pause/ContextMenu 等）macOS 无稳定对应，
+            // 返回 None 由调用方跳过（而非报错中断整批）。
+            _ => return None,
+        })
+    }
+
+    fn post_mouse(
+        source: CGEventSource,
+        event_type: CGEventType,
+        position: CGPoint,
+        button: CGMouseButton,
+    ) -> Result<(), String> {
+        CGEvent::new_mouse_event(source, event_type, position, button)
+            .map(|event| event.post(CGEventTapLocation::Session))
+            .map_err(|_| "无法创建 macOS 鼠标事件".to_string())
+    }
+
+    pub fn inject(events: &[RemoteInputEvent]) -> Result<(), String> {
+        if !accessibility_trusted() {
+            return Err("macOS Accessibility permission required: open System Settings > Privacy & Security > Accessibility".to_string());
+        }
+        let source = source()?;
+        for event in events {
+            match event {
+                RemoteInputEvent::MouseMove { x, y } => {
+                    post_mouse(
+                        source.clone(),
+                        CGEventType::MouseMoved,
+                        point(*x, *y),
+                        CGMouseButton::Left,
+                    )?;
+                }
+                RemoteInputEvent::MouseDown { button, x, y } => {
+                    let button = mouse_button(*button)?;
+                    let kind = match button {
+                        CGMouseButton::Left => CGEventType::LeftMouseDown,
+                        CGMouseButton::Right => CGEventType::RightMouseDown,
+                        CGMouseButton::Center => CGEventType::OtherMouseDown,
+                    };
+                    post_mouse(source.clone(), kind, point(*x, *y), button)?;
+                }
+                RemoteInputEvent::MouseUp { button, x, y } => {
+                    let button = mouse_button(*button)?;
+                    let kind = match button {
+                        CGMouseButton::Left => CGEventType::LeftMouseUp,
+                        CGMouseButton::Right => CGEventType::RightMouseUp,
+                        CGMouseButton::Center => CGEventType::OtherMouseUp,
+                    };
+                    post_mouse(source.clone(), kind, point(*x, *y), button)?;
+                }
+                RemoteInputEvent::MouseWheel { dx, dy } => {
+                    let event = CGEvent::new_scroll_event(
+                        source.clone(),
+                        ScrollEventUnit::LINE,
+                        2,
+                        (*dy * WHEEL_SCALE).round() as i32,
+                        (*dx * WHEEL_SCALE).round() as i32,
+                        0,
+                    )
+                    .map_err(|_| "无法创建 macOS 滚轮事件".to_string())?;
+                    event.post(CGEventTapLocation::Session);
+                }
+                RemoteInputEvent::KeyDown { code, .. } => {
+                    // 未映射键码跳过（只告警一次），不报错——否则会中断整批并把
+                    // 之前已按下的键永久卡住。对齐 Windows/Linux 的"跳过"语义。
+                    if let Some(code) = keycode(*code) {
+                        CGEvent::new_keyboard_event(source.clone(), code, true)
+                            .map_err(|_| "无法创建 macOS 键盘事件".to_string())?
+                            .post(CGEventTapLocation::Session);
+                    } else if !UNSUPPORTED_KEY_LOGGED.swap(true, Ordering::Relaxed) {
+                        log::warn!(
+                            "macOS 被控端暂不支持该远程键码: 0x{:02X}（后续同类不再提示）",
+                            code
+                        );
+                    }
+                }
+                RemoteInputEvent::KeyUp { code, .. } => {
+                    if let Some(code) = keycode(*code) {
+                        CGEvent::new_keyboard_event(source.clone(), code, false)
+                            .map_err(|_| "无法创建 macOS 键盘事件".to_string())?
+                            .post(CGEventTapLocation::Session);
+                    } else if !UNSUPPORTED_KEY_LOGGED.swap(true, Ordering::Relaxed) {
+                        log::warn!(
+                            "macOS 被控端暂不支持该远程键码: 0x{:02X}（后续同类不再提示）",
+                            code
+                        );
+                    }
+                }
+                RemoteInputEvent::NamedKey { key } => {
+                    // 对齐 Windows/Linux：手机端系统导航键用小写语义名。
+                    // "home"（回桌面）/"recents"（任务总览）在 macOS 无稳定按键快捷键，
+                    // 连同其它未知名字一律忽略，绝不报错中断整批。
+                    let code = match key.as_str() {
+                        "back" => KeyCode::ESCAPE,
+                        "backspace" | "delete" => KeyCode::DELETE,
+                        _ => continue,
+                    };
+                    CGEvent::new_keyboard_event(source.clone(), code, true)
+                        .map_err(|_| "无法创建 macOS 命名键事件".to_string())?
+                        .post(CGEventTapLocation::Session);
+                    CGEvent::new_keyboard_event(source.clone(), code, false)
+                        .map_err(|_| "无法创建 macOS 命名键事件".to_string())?
+                        .post(CGEventTapLocation::Session);
+                }
+                RemoteInputEvent::Text { text } => {
+                    // 与 Windows 一致，用 Unicode 字符串注入（支持中文/emoji），
+                    // 不再报错中断整批。空串直接跳过。
+                    if text.is_empty() {
+                        continue;
+                    }
+                    let down = CGEvent::new_keyboard_event(source.clone(), 0, true)
+                        .map_err(|_| "无法创建 macOS 文本事件".to_string())?;
+                    down.set_string(text);
+                    down.post(CGEventTapLocation::Session);
+                    let up = CGEvent::new_keyboard_event(source.clone(), 0, false)
+                        .map_err(|_| "无法创建 macOS 文本事件".to_string())?;
+                    up.set_string(text);
+                    up.post(CGEventTapLocation::Session);
+                }
+                RemoteInputEvent::Unknown => { /* 对端专属事件（如手机 home/recents）：忽略 */ }
+            }
+        }
+        Ok(())
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::keycode;
+        #[test]
+        fn maps_common_windows_keys_to_quartz() {
+            assert!(keycode(0x41).is_some()); // A
+            assert!(keycode(0x25).is_some()); // ArrowLeft
+            assert!(keycode(0x70).is_some()); // F1
+            assert!(keycode(0xFFFF).is_none());
+        }
+
+        #[test]
+        fn maps_modifiers_symbols_and_numpad() {
+            // 之前这些都落到 None 并让 inject() 报错中断整批；现在必须有映射。
+            for vk in [
+                0xA0, 0xA1, 0xA2, 0xA3, 0xA4, 0xA5, 0x5B, 0x5C, // 修饰键
+                0xC0, 0xBD, 0xBB, 0xDB, 0xDD, 0xDC, 0xBA, 0xDE, 0xBC, 0xBE, 0xBF, // 符号
+                0x60, 0x69, 0x6A, 0x6B, 0x6D, 0x6E, 0x6F, // 小键盘
+                0x14, 0x2E, // CapsLock / 前删除
+            ] {
+                assert!(keycode(vk).is_some(), "VK 0x{vk:02X} 应有 macOS 映射");
+            }
+            // 无稳定对应的键仍返回 None，由调用方跳过而不是报错。
+            assert!(keycode(0x5D).is_none()); // ContextMenu
+            assert!(keycode(0x2C).is_none()); // PrintScreen
+        }
     }
 }
 

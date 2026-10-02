@@ -64,6 +64,10 @@ else
   printf '警告: --ui-only 只验证 macOS UI/app bundle，不包含 EasyTier 组网能力。\n'
 fi
 
+MACOS_CONFIG="${ROOT}/src-tauri/tauri.macos.conf.json"
+[[ -f "${MACOS_CONFIG}" ]] || fail "缺少 macOS Tauri 配置: ${MACOS_CONFIG}"
+TAURI_MACOS_CONFIG_ARGS=(--config "${MACOS_CONFIG}")
+
 export MCTIER_MACOS_EASYTIER_READY=1
 export MCTIER_MACOS_EASYTIER_ARCH="${TARGET}"
 
@@ -73,14 +77,14 @@ npm run build
 
 if (( NO_BUNDLE )); then
   if (( DEBUG )); then
-    npm run tauri -- build --debug --no-bundle
+    npm run tauri -- build --debug --no-bundle "${TAURI_MACOS_CONFIG_ARGS[@]}"
   else
-    npm run tauri -- build --no-bundle
+    npm run tauri -- build --no-bundle "${TAURI_MACOS_CONFIG_ARGS[@]}"
   fi
 elif (( DEBUG )); then
-  npm run tauri -- build --debug --bundles app
+  npm run tauri -- build --debug --bundles app "${TAURI_MACOS_CONFIG_ARGS[@]}"
 else
-  npm run tauri -- build --bundles dmg
+  npm run tauri -- build --bundles dmg "${TAURI_MACOS_CONFIG_ARGS[@]}"
 fi
 
 printf '\nmacOS 构建完成，产物位于 src-tauri/target/。\n'

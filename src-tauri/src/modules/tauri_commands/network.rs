@@ -193,7 +193,7 @@ pub async fn force_stop_easytier(state: State<'_, AppState>) -> Result<(), Strin
 ///
 /// 关键点：create_lobby/join_lobby 在 start_easytier 的等待期间会一直持有
 /// network_service 锁，因此不能通过会抢同一把锁的 force_stop_easytier 来取消。
-/// 这里直接用 taskkill 终止 easytier-core 进程（不加任何锁），进程退出后
+/// 这里直接终止 easytier-core 进程（不加任何锁），进程退出后
 /// start_easytier 的进程监控任务会把 is_running 置为 false，等待循环随即
 /// 返回错误，create_lobby/join_lobby 得以结束并释放锁。
 #[tauri::command]
@@ -212,7 +212,15 @@ pub async fn cancel_lobby_connecting() -> Result<(), String> {
         }
     }
 
-    #[cfg(not(target_os = "windows"))]
+    // macOS：easytier-core 现在以 root 运行，用户态 pkill 杀不掉它，而且全局
+    // pkill -f 会波及用户自己的其它 EasyTier 实例。改由 root 监管脚本读取的
+    // 停止哨兵来终止，同样不需要 network_service 锁。
+    #[cfg(target_os = "macos")]
+    {
+        crate::modules::macos_privilege::request_stop_for_all_sessions();
+    }
+
+    #[cfg(target_os = "linux")]
     {
         let pkill = unix_system_command("pkill")?;
         let _ = tokio::process::Command::new(pkill)
@@ -359,7 +367,14 @@ pub async fn is_admin() -> bool {
     }
     #[cfg(not(windows))]
     {
-        true
+        #[cfg(unix)]
+        {
+            return unsafe { libc::geteuid() } == 0;
+        }
+        #[cfg(not(unix))]
+        {
+            false
+        }
     }
 }
 

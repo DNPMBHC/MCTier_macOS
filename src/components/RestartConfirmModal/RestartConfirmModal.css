@@ -1,5 +1,27 @@
 /* 重启确认弹窗样式 */
 
+@media (min-width: 760px) {
+  :root[data-platform='macos'] .restart-modal-overlay {
+    padding: 72px 24px 24px;
+  }
+
+  :root[data-platform='macos'] .restart-modal-content {
+    width: min(520px, calc(100vw - 48px));
+    max-height: min(620px, calc(100dvh - 120px));
+    overflow-y: auto;
+  }
+
+  :root[data-platform='macos'] .restart-modal-description {
+    max-width: none;
+    overflow-wrap: anywhere;
+  }
+
+  :root[data-platform='macos'] .restart-modal-content :focus-visible {
+    outline: 2px solid rgba(126, 211, 33, 0.9);
+    outline-offset: 3px;
+  }
+}
+
 .restart-modal-overlay {
   position: fixed;
   top: 0;

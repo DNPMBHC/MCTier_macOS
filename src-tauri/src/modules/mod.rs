@@ -29,6 +29,9 @@ pub mod virtual_network;
 // 语音服务模块
 #[cfg(windows)]
 pub mod privileged_helper;
+// macOS：utun 必须由 root 创建，EasyTier 通过系统授权窗口提权运行
+#[cfg(target_os = "macos")]
+pub mod macos_privilege;
 pub mod voice_service;
 #[cfg(windows)]
 pub mod windows_paths;

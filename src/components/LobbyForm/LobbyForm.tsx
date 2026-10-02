@@ -1113,7 +1113,18 @@ export const LobbyForm: React.FC<LobbyFormProps> = ({ mode, onClose }) => {
         console.warn('记录统计会话失败（忽略）:', e);
       }
 
-      message.info(tl('正在连接大厅...', 'Connecting to lobby...'));
+      // macOS 上 easytier-core 必须以 root 运行才能创建 utun，后端随即会弹出系统管理员
+      // 授权窗口。提前在提示里说明，避免用户把它当成无关弹窗直接点“取消”。
+      const isMacOS = /Mac|iPhone|iPad|iPod/.test(navigator.platform);
+      message.info(
+        isMacOS
+          ? tl(
+              '正在连接大厅... macOS 会弹出管理员授权窗口，请输入登录密码以创建虚拟网卡',
+              'Connecting... macOS will ask for administrator authorization to create the virtual adapter. Enter your login password.'
+            )
+          : tl('正在连接大厅...', 'Connecting to lobby...'),
+        isMacOS ? 8 : 3
+      );
 
       // 关闭表单
       onClose();

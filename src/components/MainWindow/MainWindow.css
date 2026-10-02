@@ -1,3 +1,118 @@
+.main-window.macos-desktop-window {
+  min-height: 100%;
+  height: 100%;
+  padding: 72px clamp(32px, 6vw, 96px) 48px;
+  justify-content: flex-start;
+  overflow: auto;
+  background: #151722;
+}
+
+.main-window.macos-desktop-window .main-window-drag-area {
+  height: 52px;
+  /* macOS 下 WKWebView 不认 -webkit-app-region，拖拽依赖 data-tauri-drag-region
+     的 JS mousedown，必须能接收指针事件；pointer-events:none 会让顶栏无法拖动。 */
+  pointer-events: auto;
+  -webkit-app-region: drag;
+  app-region: drag;
+}
+
+.main-window.macos-desktop-window .main-window-content {
+  width: min(100%, 1040px);
+  max-width: 1040px;
+  min-width: 0;
+  margin: auto;
+  padding: 28px clamp(20px, 4vw, 64px) 40px;
+}
+
+.main-window.macos-desktop-window .main-window-logo {
+  width: 104px;
+  height: 104px;
+  margin-bottom: 24px;
+}
+
+.main-window.macos-desktop-window .main-window-title {
+  font-size: clamp(36px, 4vw, 52px) !important;
+}
+
+.main-window.macos-desktop-window .main-window-actions {
+  width: min(100%, 760px);
+  margin-bottom: 32px;
+}
+
+.main-window.macos-desktop-window .main-window-actions .ant-space-vertical {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.main-window.macos-desktop-window .main-window-actions .ant-space-item {
+  min-width: 0;
+  margin: 0 !important;
+}
+
+.main-window.macos-desktop-window .main-window-actions .ant-space-item > div,
+.main-window.macos-desktop-window .main-window-actions .ant-space-item > div > .main-window-button {
+  width: 100%;
+}
+
+.main-window.macos-desktop-window :focus-visible {
+  outline: 2px solid rgba(126, 211, 33, 0.9);
+  outline-offset: 3px;
+}
+
+
+.main-window.macos-desktop-window .main-window-content > :nth-child(4) {
+  width: min(100%, 760px);
+}
+
+.main-window.macos-desktop-window .main-window-content > :nth-child(4) > div {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+@media (max-width: 760px) {
+  .main-window.macos-desktop-window .main-window-actions .ant-space-vertical {
+    grid-template-columns: 1fr;
+  }
+}
+
+
+.main-window.macos-desktop-window .main-window-hint {
+  position: static;
+  transform: none;
+  margin-top: 12px;
+}
+
+.main-window.macos-desktop-window .main-window-version {
+  margin-top: 28px;
+}
+
+.main-window.macos-desktop-window button,
+.main-window.macos-desktop-window input,
+.main-window.macos-desktop-window select,
+.main-window.macos-desktop-window textarea,
+.main-window.macos-desktop-window a,
+.main-window.macos-desktop-window .ant-select,
+.main-window.macos-desktop-window .ant-input,
+.main-window.macos-desktop-window .ant-form-item {
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
+}
+
+@media (max-height: 620px) {
+  .main-window.macos-desktop-window {
+    padding-top: 56px;
+    padding-bottom: 24px;
+  }
+
+  .main-window.macos-desktop-window .main-window-logo {
+    width: 72px;
+    height: 72px;
+    margin-bottom: 12px;
+  }
+}
+
 .main-window {
   display: flex;
   flex-direction: column;

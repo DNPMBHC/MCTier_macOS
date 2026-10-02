@@ -17,6 +17,10 @@ pub fn accept_authenticated(
 }
 
 /// Invalid or stalled candidates cannot consume the entire authorization wait.
+// Called by `accept_authenticated` (Windows-only) and by the cross-platform
+// unit tests; keep this generic TCP helper compiled everywhere but silence the
+// dead-code warning where neither caller is built.
+#[cfg_attr(not(any(windows, test)), allow(dead_code))]
 fn accept_with_owner_check(
     listener: TcpListener,
     timeout: Duration,

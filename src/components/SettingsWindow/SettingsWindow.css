@@ -2,6 +2,36 @@
    设置窗口 - 完整样式
    ============================ */
 
+@media (min-width: 760px) {
+  :root[data-platform='macos'] .settings-window {
+    width: min(100%, 980px);
+    min-height: 0;
+    margin: 0 auto;
+  }
+
+  :root[data-platform='macos'] .settings-window-scroll {
+    min-height: 0;
+    overflow-y: auto;
+  }
+
+  :root[data-platform='macos'] .settings-window-inner {
+    min-width: 0;
+    padding: 24px 40px max(40px, env(safe-area-inset-bottom, 0px));
+  }
+
+  :root[data-platform='macos'] .settings-toggle-desc,
+  :root[data-platform='macos'] .settings-description,
+  :root[data-platform='macos'] .settings-card-description {
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
+  :root[data-platform='macos'] .settings-window :focus-visible {
+    outline: 2px solid rgba(126, 211, 33, 0.9);
+    outline-offset: 3px;
+  }
+}
+
 .settings-window {
   width: 100%;
   height: 100%;

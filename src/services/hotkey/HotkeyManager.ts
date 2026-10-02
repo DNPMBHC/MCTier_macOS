@@ -51,6 +51,7 @@ export class HotkeyManager {
    * 例如: "CommandOrControl+M" -> { ctrl: true, key: 'm' }
    */
   private parseHotkey(key: string): {
+    commandOrControl: boolean;
     ctrl: boolean;
     alt: boolean;
     shift: boolean;
@@ -59,6 +60,7 @@ export class HotkeyManager {
   } {
     const parts = key.toLowerCase().split('+');
     const result = {
+      commandOrControl: false,
       ctrl: false,
       alt: false,
       shift: false,
@@ -68,7 +70,7 @@ export class HotkeyManager {
 
     parts.forEach((part) => {
       if (part === 'ctrl' || part === 'control' || part === 'commandorcontrol') {
-        result.ctrl = true;
+        result.commandOrControl = true;
       } else if (part === 'alt' || part === 'option') {
         result.alt = true;
       } else if (part === 'shift') {
@@ -93,12 +95,20 @@ export class HotkeyManager {
     const eventKey = event.key.toLowerCase();
     const keyMatches = eventKey === hotkey.key || event.code.toLowerCase() === `key${hotkey.key}`;
 
+    const usesMacCommand = typeof navigator !== 'undefined' && /Mac|iPhone|iPad|iPod/.test(navigator.platform);
+
+    // commandOrControl 在 Mac 上对应 Cmd(metaKey)，其它平台对应 Ctrl(ctrlKey)。
+    // 之前的实现用从未被赋值的 hotkey.ctrl 做判断，导致任何 Ctrl/CommandOrControl
+    // 快捷键在所有平台都匹配不上；这里直接按解析出的修饰键推导期望状态。
+    const expectCtrl = hotkey.ctrl || (hotkey.commandOrControl && !usesMacCommand);
+    const expectMeta = hotkey.meta || (hotkey.commandOrControl && usesMacCommand);
+
     return (
       keyMatches &&
-      event.ctrlKey === hotkey.ctrl &&
+      event.ctrlKey === expectCtrl &&
       event.altKey === hotkey.alt &&
       event.shiftKey === hotkey.shift &&
-      event.metaKey === hotkey.meta
+      event.metaKey === expectMeta
     );
   }
 

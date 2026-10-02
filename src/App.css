@@ -66,6 +66,28 @@ body {
   background: transparent;
 }
 
+:root[data-platform='macos'] body,
+:root[data-platform='macos'] #root,
+:root[data-platform='macos'] .app-container {
+  min-height: 100vh;
+}
+
+/* <html> 没有确定高度时，`height/min-height: 100%` 会逐层退化成 auto：整棵树只剩
+   内容高度，主窗口既不铺满窗口也不垂直居中，底部会露出一条背景带（首页尤其明显），
+   内容比窗口高时还会因为 html/body 的 overflow:hidden 被裁掉而无法滚动。
+   这里用视口单位给容器一个确定高度，滚动交给 .app-container 自己。 */
+:root[data-platform='macos'] .app-container {
+  height: 100vh;
+  min-height: 100vh;
+  overflow: auto;
+  padding-top: env(safe-area-inset-top, 0px);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+:root[data-platform='macos'] .app-container > * {
+  min-height: 0;
+}
+
 /* 现代化滚动条 */
 ::-webkit-scrollbar {
   width: 8px;

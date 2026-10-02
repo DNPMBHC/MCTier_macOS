@@ -39,15 +39,23 @@ export const HotkeyInput: React.FC<HotkeyInputProps> = ({
 
     // 修饰键
     if (e.ctrlKey) keys.push('Ctrl');
-    if (e.altKey) keys.push('Alt');
+    if (e.altKey) keys.push(/Mac|iPhone|iPad|iPod/.test(navigator.platform) ? 'Option' : 'Alt');
     if (e.shiftKey) keys.push('Shift');
-    if (e.metaKey) keys.push('Meta');
+    if (e.metaKey) keys.push(/Mac|iPhone|iPad|iPod/.test(navigator.platform) ? 'Command' : 'Meta');
 
-    // 主键
-    const key = e.key;
+    // 主键：优先用物理键位 e.code，避免 macOS 上 Option+字母 组合出带音标的字符
+    // （例如 Option+A 的 e.key 是 'å'），否则归一化后 Tauri 无法解析、注册失败。
+    let key = e.key;
+    const codeLetter = /^Key([A-Z])$/.exec(e.code);
+    const codeDigit = /^Digit([0-9])$/.exec(e.code);
+    if (codeLetter) {
+      key = codeLetter[1];
+    } else if (codeDigit) {
+      key = codeDigit[1];
+    }
     
     // 排除单独的修饰键
-    if (!['Control', 'Alt', 'Shift', 'Meta'].includes(key)) {
+    if (!['Control', 'Alt', 'Shift', 'Meta', 'Command', 'Option'].includes(key)) {
       // 特殊键处理
       if (key === ' ') {
         keys.push('Space');
@@ -59,7 +67,7 @@ export const HotkeyInput: React.FC<HotkeyInputProps> = ({
     }
 
     // 至少需要一个非修饰键
-    if (keys.length > 0 && !['Ctrl', 'Alt', 'Shift', 'Meta'].includes(keys[keys.length - 1])) {
+    if (keys.length > 0 && !['Ctrl', 'Alt', 'Shift', 'Meta', 'Command', 'Option'].includes(keys[keys.length - 1])) {
       const hotkey = keys.join('+');
       setDisplayValue(hotkey);
       setIsRecording(false);

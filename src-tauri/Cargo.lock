@@ -3072,6 +3072,7 @@ dependencies = [
  "bytes",
  "calamine",
  "chrono",
+ "core-graphics",
  "dashmap",
  "dirs 5.0.1",
  "embed-resource",

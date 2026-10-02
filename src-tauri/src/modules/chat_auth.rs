@@ -313,11 +313,13 @@ impl ChatSigner {
         let entry = keyring::Entry::new("MCTier", "chat-identity-p256-v1")
             .map_err(|_| "Cannot open chat identity credential")?;
         match entry.get_secret() {
-            Ok(bytes) => Self::from_signing_key(SigningKey::from_slice(&bytes)
-                .map_err(|_| "Invalid saved chat identity")?),
+            Ok(bytes) => Self::from_signing_key(
+                SigningKey::from_slice(&bytes).map_err(|_| "Invalid saved chat identity")?,
+            ),
             Err(keyring::Error::NoEntry) => {
                 let identity = Self::generate()?;
-                entry.set_secret(&identity.signing_key.to_bytes())
+                entry
+                    .set_secret(&identity.signing_key.to_bytes())
                     .map_err(|_| "Cannot save chat identity credential")?;
                 Ok(identity)
             }
@@ -326,7 +328,9 @@ impl ChatSigner {
     }
 
     #[cfg(test)]
-    pub fn local_identity() -> Result<Self, String> { Self::generate() }
+    pub fn local_identity() -> Result<Self, String> {
+        Self::generate()
+    }
 
     pub fn public_key_b64(&self) -> String {
         base64_encode(&self.public_key_der)
@@ -582,13 +586,22 @@ mod tests {
     #[test]
     fn restored_identity_keeps_fingerprint_and_new_session_context() {
         let original = signer();
-        let restored = ChatSigner::from_signing_key(SigningKey::from_slice(&original.signing_key.to_bytes()).unwrap()).unwrap();
+        let restored = ChatSigner::from_signing_key(
+            SigningKey::from_slice(&original.signing_key.to_bytes()).unwrap(),
+        )
+        .unwrap();
         assert_eq!(original.identity_id(), restored.identity_id());
         let signature = restored.sign_signaling_registration("new-challenge", "lobby", "10.1.2.3");
-        assert!(verify_signature(&original.public_key_der, &signature,
-            &canonical_signaling_registration("new-challenge", "lobby", "10.1.2.3")));
-        assert!(!verify_signature(&original.public_key_der, &signature,
-            &canonical_signaling_registration("old-challenge", "lobby", "10.1.2.3")));
+        assert!(verify_signature(
+            &original.public_key_der,
+            &signature,
+            &canonical_signaling_registration("new-challenge", "lobby", "10.1.2.3")
+        ));
+        assert!(!verify_signature(
+            &original.public_key_der,
+            &signature,
+            &canonical_signaling_registration("old-challenge", "lobby", "10.1.2.3")
+        ));
     }
 
     #[test]

@@ -7,6 +7,7 @@ use std::io::{Read, Seek, SeekFrom, Write};
 use std::os::fd::AsRawFd;
 use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
 use std::path::Path;
+#[cfg(target_os = "linux")]
 use std::process::{Command, Stdio};
 
 const SWITCH: &str = "--mctier-write-hosts";
@@ -35,29 +36,45 @@ pub fn write_hosts(path: &Path, content: &str) -> Result<(), String> {
     if unsafe { libc::geteuid() } == 0 {
         return apply(&request);
     }
-    let executable = std::env::current_exe().map_err(|e| e.to_string())?;
-    let mut child = Command::new("/usr/bin/pkexec")
-        .arg(executable)
-        .arg(SWITCH)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .map_err(|e| format!("unable to start polkit hosts helper: {e}"))?;
-    let result = (|| {
-        let mut input = child.stdin.take().ok_or("missing helper input")?;
-        serde_json::to_writer(&mut input, &request).map_err(|e| e.to_string())?;
-        input.flush().map_err(|e| e.to_string())
-    })();
-    if result.is_err() {
-        let _ = child.kill();
+    #[cfg(target_os = "macos")]
+    {
+        return Err(
+            "macOS hosts 授权 helper 尚未安装；请使用已签名的 MCTier 安装包，或在系统设置中手动配置 Magic DNS".into(),
+        );
     }
-    let status = child.wait().map_err(|e| e.to_string())?;
-    result?;
-    if status.success() {
-        Ok(())
-    } else {
-        Err("hosts authorization cancelled, content changed, or helper validation failed; retry the operation".into())
+
+    #[cfg(target_os = "linux")]
+    {
+        let executable = std::env::current_exe().map_err(|e| e.to_string())?;
+        let mut child = Command::new("/usr/bin/pkexec")
+            .arg(executable)
+            .arg(SWITCH)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .map_err(|e| format!("unable to start polkit hosts helper: {e}"))?;
+        let result = (|| {
+            let mut input = child.stdin.take().ok_or("missing helper input")?;
+            serde_json::to_writer(&mut input, &request).map_err(|e| e.to_string())?;
+            input.flush().map_err(|e| e.to_string())
+        })();
+        if result.is_err() {
+            let _ = child.kill();
+        }
+        let status = child.wait().map_err(|e| e.to_string())?;
+        result?;
+        if status.success() {
+            Ok(())
+        } else {
+            Err("hosts authorization cancelled, content changed, or helper validation failed; retry the operation".into())
+        }
+    }
+
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    {
+        let _ = request;
+        Err("current Unix platform has no hosts authorization helper".into())
     }
 }
 

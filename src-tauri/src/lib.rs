@@ -102,18 +102,19 @@ use modules::tauri_commands::{
     list_directory_files, mute_all, mute_player, open_danmaku_window, open_external_url,
     open_file_location, open_folder, open_game_hud_window, open_log_file, open_log_folder,
     open_microphone_privacy_settings, open_screen_viewer_window, ping_virtual_ip,
-    prepare_p2p_chat_identity, prepare_signaling_identity, read_file, read_file_bytes,
-    read_log_file, remove_player_domain, remove_shared_folder, reset_config_to_default,
+    prepare_p2p_chat_identity, prepare_signaling_identity, preview_office_attachment,
+    preview_spreadsheet_attachment, read_file, read_file_bytes, read_log_file,
+    remove_player_domain, remove_shared_folder, reset_config_to_default,
     reset_microphone_permission, restart_app_with_gpu_settings, restart_as_admin,
-    preview_office_attachment, preview_spreadsheet_attachment, save_chat_attachment, save_chat_image, save_danmaku_image, save_exit_node_advanced_config,
+    save_chat_attachment, save_chat_image, save_danmaku_image, save_exit_node_advanced_config,
     save_file, save_opacity, save_settings, save_voice_volume, save_window_position,
     select_chat_attachment, select_file, select_file_share_download_folder, select_folder,
     select_save_location, send_heartbeat, send_p2p_chat_message, send_signaling_message,
     set_always_on_top, set_auto_start, set_avatar_data, set_danmaku_ignore_cursor,
     set_file_share_download_dir, set_gamehud_ignore_cursor, set_mic_enabled, set_window_opacity,
     sign_signaling_registration, start_file_server, stop_file_server, stop_p2p_chat,
-    test_node_latency, toggle_mic, toggle_mini_mode, transcribe_voice_message, update_config, update_p2p_chat_peers,
-    verify_share_password, write_file_bytes,
+    test_node_latency, toggle_mic, toggle_mini_mode, transcribe_voice_message, update_config,
+    update_p2p_chat_peers, verify_share_password, write_file_bytes,
 };
 
 use modules::easytier_advanced_commands::{
@@ -820,11 +821,23 @@ fn normalize_hotkey(raw: &str) -> String {
         .map(|part| {
             let lower = part.to_lowercase();
             match lower.as_str() {
-                "ctrl" | "control" | "commandorcontrol" | "cmdorctrl" => {
-                    "CommandOrControl".to_string()
+                // 物理 Ctrl：macOS 上映射到真正的 Control，使其与 Command 可区分，
+                // 且全局快捷键落在 Mac 很少占用的 Control 上，不与应用自身的 Cmd 快捷键冲突。
+                "ctrl" | "control" => {
+                    #[cfg(target_os = "macos")]
+                    {
+                        "Control".to_string()
+                    }
+                    #[cfg(not(target_os = "macos"))]
+                    {
+                        "CommandOrControl".to_string()
+                    }
                 }
+                // 显式的"跨平台主修饰键"记号保持原语义（Mac=Cmd，其它=Ctrl）。
+                "commandorcontrol" | "cmdorctrl" => "CommandOrControl".to_string(),
                 "alt" | "option" => "Alt".to_string(),
                 "shift" => "Shift".to_string(),
+                // Command/Meta/Super：统一用 Super（macOS 上即 Command 键），与 Control 区分。
                 "meta" | "cmd" | "command" | "super" | "win" => "Super".to_string(),
                 // 其余为主键：单字符统一大写，功能键（F1/F2…）与命名键保持原样
                 _ => {

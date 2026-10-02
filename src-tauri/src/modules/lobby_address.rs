@@ -5,15 +5,20 @@ const SUBNET_PREFIX: &str = "10.126.126.";
 
 fn configured_host(raw: &str) -> Result<u8, String> {
     let value = raw.trim();
-    let (address, prefix) = value.split_once('/').map_or((value, None), |(ip, prefix)| (ip, Some(prefix)));
+    let (address, prefix) = value
+        .split_once('/')
+        .map_or((value, None), |(ip, prefix)| (ip, Some(prefix)));
     if prefix.is_some_and(|prefix| prefix != "24") {
         return Err(format!("虚拟 IP 必须使用固定网段 {SUBNET_PREFIX}0/24"));
     }
-    let host = address.strip_prefix(SUBNET_PREFIX)
+    let host = address
+        .strip_prefix(SUBNET_PREFIX)
         .ok_or_else(|| format!("虚拟 IP 必须位于固定网段 {SUBNET_PREFIX}0/24"))?
         .parse::<u8>()
         .map_err(|_| "虚拟 IP 主机位必须是 1 到 254".to_string())?;
-    if !(1..=254).contains(&host) { return Err("虚拟 IP 主机位必须是 1 到 254".into()); }
+    if !(1..=254).contains(&host) {
+        return Err("虚拟 IP 主机位必须是 1 到 254".into());
+    }
     Ok(host)
 }
 
@@ -45,7 +50,9 @@ pub fn configuration(
         .cloned()
         .unwrap_or_default();
     let configured = config.ipv4.as_deref().unwrap_or("").trim();
-    let preferred_host = (!configured.is_empty()).then(|| configured_host(configured)).transpose()?;
+    let preferred_host = (!configured.is_empty())
+        .then(|| configured_host(configured))
+        .transpose()?;
     let automatic = configured.is_empty() || attempt != 0;
     if configured.is_empty() || attempt != 0 {
         config.ipv4 = Some(format!("{}/24", candidate(name, identity, attempt)?));
@@ -108,7 +115,8 @@ mod tests {
                 .unwrap()
                 .1
         );
-        let (fallback, automatic) = configuration(Some(&global), Some(&lobby), "r", "a", 1).unwrap();
+        let (fallback, automatic) =
+            configuration(Some(&global), Some(&lobby), "r", "a", 1).unwrap();
         assert!(automatic);
         assert_ne!(fallback.ipv4, global.ipv4);
         lobby.use_global_config = false;

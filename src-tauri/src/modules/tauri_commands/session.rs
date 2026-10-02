@@ -587,6 +587,7 @@ pub fn open_microphone_privacy_settings() -> Result<(), String> {
 /// WebView to exit before deleting EBWebView, avoiding locked-file failures.
 #[tauri::command]
 pub fn reset_microphone_permission(app: tauri::AppHandle) -> Result<(), String> {
+    #[cfg(any(windows, not(target_os = "macos")))]
     let exe = std::env::current_exe().map_err(|e| format!("获取程序路径失败: {}", e))?;
     #[cfg(windows)]
     {
@@ -596,16 +597,24 @@ pub fn reset_microphone_permission(app: tauri::AppHandle) -> Result<(), String> 
             .creation_flags(0x08000000)
             .spawn()
             .map_err(|e| format!("重启 MCTier 失败: {}", e))?;
+        app.exit(0);
+        Ok(())
     }
-    #[cfg(not(windows))]
+    #[cfg(target_os = "macos")]
+    {
+        let _ = app;
+        return open_microphone_privacy_settings();
+    }
+
+    #[cfg(not(any(windows, target_os = "macos")))]
     {
         std::process::Command::new(&exe)
             .arg("--reset-microphone-permission")
             .spawn()
             .map_err(|e| format!("重启 MCTier 失败: {}", e))?;
+        app.exit(0);
+        Ok(())
     }
-    app.exit(0);
-    Ok(())
 }
 
 /// 静音或取消静音指定玩家
@@ -1181,7 +1190,7 @@ pub async fn toggle_mini_mode(mini_mode: bool, window: tauri::Window) -> Result<
     log::info!("切换迷你模式: {}", mini_mode);
 
     if mini_mode {
-        // 迷你模式：小窗口 + 置顶
+        // Mini mode stays compact on every platform.
         window
             .set_size(tauri::Size::Physical(tauri::PhysicalSize {
                 width: 320,
@@ -1197,12 +1206,13 @@ pub async fn toggle_mini_mode(mini_mode: bool, window: tauri::Window) -> Result<
             .set_resizable(false)
             .map_err(|e| format!("设置窗口不可调整大小失败: {}", e))?;
     } else {
-        // 正常模式：恢复原始大小 + 取消置顶
+        // Restore the desktop window to the platform's intended logical size.
+        #[cfg(target_os = "macos")]
+        let (width, height) = (980.0, 680.0);
+        #[cfg(not(target_os = "macos"))]
+        let (width, height) = (1000.0, 700.0);
         window
-            .set_size(tauri::Size::Physical(tauri::PhysicalSize {
-                width: 1000,
-                height: 700,
-            }))
+            .set_size(tauri::Size::Logical(tauri::LogicalSize { width, height }))
             .map_err(|e| format!("设置窗口大小失败: {}", e))?;
 
         window

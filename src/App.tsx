@@ -40,6 +40,13 @@ import {
 import { isSafeResourceId, sanitizeUntrustedText } from './security/trustBoundary';
 import './App.css';
 
+// 与 MainWindow/MiniWindow 的模块级 isMacOS 判定保持同一时序：模块加载时同步写入
+// data-platform，避免首帧缺少 macOS 安全区/内边距导致的布局跳动。
+if (typeof document !== 'undefined' && typeof navigator !== 'undefined') {
+  const isMacOSPlatform = /Mac|iPhone|iPad|iPod/.test(navigator.platform);
+  document.documentElement.dataset.platform = isMacOSPlatform ? 'macos' : 'other';
+}
+
 function App() {
   const search = window.location.search;
   if (search.includes('danmaku=true')) return <DanmakuOverlay />;
@@ -391,9 +398,12 @@ function MainWindowApp() {
         // 初始化状态管理（同步）
         initializeStore();
 
-        // 监听窗口关闭事件
-        const appWindow = getCurrentWindow();
-        const unlistenClose = await appWindow.onCloseRequested(async () => {
+        // macOS 的原生交通灯/系统窗口事件由 Rust/Tauri 统一处理，避免 React
+        // 再注册一个 close handler 与原生 CloseRequested 竞态。
+        const isMacOS = /Mac|iPhone|iPad|iPod/.test(navigator.platform);
+        const unlistenClose = isMacOS
+          ? () => {}
+          : await getCurrentWindow().onCloseRequested(async () => {
           try {
             const settings = await invoke<{ closeToTray?: boolean }>('get_settings');
             if (settings.closeToTray) {
@@ -887,10 +897,27 @@ function MainWindowApp() {
             footer={
               <div className="microphone-permission-actions">
                 <Button onClick={() => void invoke('open_microphone_privacy_settings')}>
-                  {tl('打开 Windows 麦克风设置', 'Open Windows microphone settings')}
+                  {tl(
+                    navigator.platform.includes('Mac') ? '打开 macOS 麦克风设置' : '打开 Windows 麦克风设置',
+                    navigator.platform.includes('Mac') ? 'Open macOS Microphone Settings' : 'Open Windows microphone settings'
+                  )}
                 </Button>
-                <Button type="primary" onClick={() => void invoke('reset_microphone_permission')}>
-                  {tl('一键重置并重启', 'Reset and restart')}
+                <Button
+                  type="primary"
+                  onClick={() => {
+                    // macOS 的 reset_microphone_permission 只是再打开系统设置，与左侧按钮重复；
+                    // 这里改为关闭弹窗让用户授权后返回重试，不再谎称"在应用内重新检查"。
+                    if (navigator.platform.includes('Mac')) {
+                      setShowMicrophonePermissionHelp(false);
+                    } else {
+                      void invoke('reset_microphone_permission');
+                    }
+                  }}
+                >
+                  {tl(
+                    navigator.platform.includes('Mac') ? '我已授权，关闭' : '一键重置并重启',
+                    navigator.platform.includes('Mac') ? "I've granted — close" : 'Reset and restart'
+                  )}
                 </Button>
               </div>
             }
@@ -898,16 +925,20 @@ function MainWindowApp() {
             width={460}
           >
             <p>
-              {tl(
-                '如果首次申请时选择了拒绝，WebView2 可能不会再次弹出授权窗口。可先检查 Windows 麦克风隐私设置；仍无法授权时，点击“一键重置并重启”，MCTier 会清理自身的 EBWebView 权限缓存并重新申请。',
-                'If access was denied the first time, WebView2 may not show the prompt again. Check Windows microphone privacy settings first. If that does not help, reset and restart MCTier to clear its EBWebView permission cache and request access again.'
-              )}
+              {navigator.platform.includes('Mac')
+                ? tl(
+                    '请在系统设置 > 隐私与安全性 > 麦克风中允许 MCTier，然后返回应用重试。macOS 权限由系统管理，应用不会删除系统 WebView 数据。',
+                    'Allow MCTier under System Settings > Privacy & Security > Microphone, then return and retry. macOS manages this permission and the app will not delete system WebView data.'
+                  )
+                : tl(
+                    '如果首次申请时选择了拒绝，WebView2 可能不会再次弹出授权窗口。可先检查 Windows 麦克风隐私设置；仍无法授权时，点击“一键重置并重启”，MCTier 会清理自身的 EBWebView 权限缓存并重新申请。',
+                    'If access was denied the first time, WebView2 may not show the prompt again. Check Windows microphone privacy settings first. If that does not help, reset and restart MCTier to clear its EBWebView permission cache and request access again.'
+                  )}
             </p>
             <p style={{ opacity: 0.68, marginBottom: 0 }}>
-              {tl(
-                '重置只会清理 MCTier 的 WebView2 浏览数据，不会删除大厅配置。',
-                'The reset only clears MCTier WebView2 browsing data. Lobby settings are preserved.'
-              )}
+              {navigator.platform.includes('Mac')
+                ? tl('更改权限后可能需要重新启动应用或再次发起语音请求。', 'After changing the permission, restart the app or retry the voice request.')
+                : tl('重置只会清理 MCTier 的 WebView2 浏览数据，不会删除大厅配置。', 'The reset only clears MCTier WebView2 browsing data. Lobby settings are preserved.')}
             </p>
           </Modal>
         </AntdApp>

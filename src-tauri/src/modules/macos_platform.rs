@@ -59,6 +59,25 @@ pub fn has_virtual_adapter() -> Result<bool, String> {
     }))
 }
 
+pub fn open_privacy_settings(kind: &str) -> Result<(), String> {
+    let destination = match kind {
+        "microphone" => {
+            "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone"
+        }
+        "screen-recording" => {
+            "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture"
+        }
+        "accessibility" => {
+            "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
+        }
+        _ => return Err("未知的 macOS 权限类型".to_string()),
+    };
+    std::process::Command::new("/usr/bin/open")
+        .arg(destination)
+        .spawn()
+        .map_err(|error| format!("打开 macOS 隐私设置失败: {error}"))?;
+    Ok(())
+}
 pub fn set_auto_start(enable: bool) -> Result<(), String> {
     let path = launch_agent_path().ok_or("无法确定 macOS 用户目录")?;
     if enable {

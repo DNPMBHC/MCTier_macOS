@@ -1,12 +1,9 @@
 # 第三方组件声明 / Third-Party Notices
 
-本次 macOS 适配与一键 DMG 构建脚本贡献来源：`https://github.com/DNPMBHC/MCTier_macOS`。
-此署名仅指 macOS 适配贡献，不替代原 MCTier 作者、版权声明或本文件所列第三方组件的权利主体。
+本文件说明 MCTier 发布版本中包含的第三方组件、其许可证、来源、版本与修改状态。
 
-This macOS adaptation and one-click DMG build contribution is maintained at
-`https://github.com/DNPMBHC/MCTier_macOS`. This attribution does not replace the
-original MCTier author, copyright notices, or any third-party rights listed here.
-
+This file documents the third-party components distributed with MCTier, together with
+their licenses, upstream sources, versions and modification status.
 
 最后更新 / Last updated: 2026-09-27（对应 MCTier 3.7.0）
 
@@ -17,7 +14,6 @@ original MCTier author, copyright notices, or any third-party rights listed here
 | 组件 | 来源 | 版本 | Commit | 许可证 | 是否修改 |
 | --- | --- | --- | --- | --- | --- |
 | EasyTier (Windows `easytier-core.exe` / `easytier-cli.exe`) | https://github.com/EasyTier/EasyTier | v2.5.0 | `88a45d115670631dfe6a05ba192387d615ddb95b` | LGPL-3.0 | 是 / Yes（见 §8） |
-| EasyTier (macOS `easytier-core` / `easytier-cli`, preview) | https://github.com/EasyTier/EasyTier | v2.5.0 | `88a45d115670631dfe6a05ba192387d615ddb95b` | LGPL-3.0 | 是 / Yes（由 `MCTier-macOS/scripts/build-easytier.sh` 从源码构建） |
 | EasyTier (Android `libeasytier_ffi.so` / `libeasytier_android_jni.so`) | https://github.com/EasyTier/EasyTier | 以 v2.6.0 为补丁基线 / patch baseline v2.6.0 | 基线 `79b562cdc9f1dc3f52195a47a02cf83542c225ab` + 本仓库补丁 | LGPL-3.0 | 是 / Yes（见 §5） |
 | Wintun (`wintun.dll`) | https://www.wintun.net | 0.14.1 | — | Wintun Prebuilt Binaries License | 否 / No（见 §7） |
 | WinDivert (`WinDivert64.sys`) | https://reqrypt.org/windivert.html | 2.2.2 | — | LGPL-3.0（双许可中所选分支） | 否 / No（见 §7） |
@@ -81,8 +77,6 @@ LGPL-3.0 要求许可证文本随发行版一同提供，因此两端均**不依
   `isShrinkResources` 不会移除 `assets/` 下的文件（已在 release 产物中核验）。
 
 ---
-
-- macOS 端使用 `MCTier-macOS/scripts/build-easytier.sh` 从 EasyTier v2.5.0 / commit `88a45d115670631dfe6a05ba192387d615ddb95b` 原生构建 `easytier-core` 与 `easytier-cli`，构建后校验 Mach-O 类型、目标架构、版本输出和 SHA-256，再放入对应资源目录。
 
 ## 4. Windows 端 EasyTier 集成 / Windows Integration
 
@@ -420,6 +414,6 @@ Wintun / WireGuard 相关声明见 §7。
 - `@aiden0z/pptx-renderer` 1.3.0 (Apache-2.0): https://github.com/aiden0z/pptx-renderer . Used without source changes to render PPTX slide pages on desktop and Android. Embedded fonts and supported shapes retain their source appearance; complex effects may differ from PowerPoint.
 - `libarchive.js` 2.0.2 (MIT), using libarchive (BSD): https://github.com/nika-begiashvili/libarchivejs . The build inlines WASM and replaces the worker's `import.meta.url` with `self.location.href` for opaque sandbox compatibility. Only archive headers are listed; entries are not extracted.
 - `sherpa-onnx` 1.13.8 (Apache-2.0): https://github.com/k2-fsa/sherpa-onnx . Desktop uses its static Rust/C API; Android uses the official JNI AAR. AAR SHA-256: `633c24321e06b1fe79feafa03ea16cbc0f8a286641e2da3559bac91bdb13bd96`.
-- Zipformer-CTC int8 Chinese model: https://huggingface.co/csukuangfj/sherpa-onnx-streaming-zipformer-small-ctc-zh-int8-2025-04-01 . Both clients bundle gzip-compressed model data and tokens (about 20,000,000 bytes combined, with a 20,100,000-byte build limit to allow gzip implementation differences); the revision, extracted sizes and SHA-256 values are pinned in `shared/speech-model.json`. Build machines obtain and verify the assets. Installed clients decompress and verify them locally on first transcription and reuse the verified cache, without network requests. Voice data is processed locally and is not uploaded. This compact model targets Mandarin rather than the previous multilingual SenseVoice model.
+- Zipformer-CTC int8 Chinese model: https://huggingface.co/csukuangfj/sherpa-onnx-streaming-zipformer-small-ctc-zh-int8-2025-04-01 . Both clients bundle gzip-compressed model data and tokens (less than 20,000,000 bytes combined); the revision, extracted sizes and SHA-256 values are pinned in `shared/speech-model.json`. Build machines obtain and verify the assets. Installed clients decompress and verify them locally on first transcription and reuse the verified cache, without network requests. Voice data is processed locally and is not uploaded. This compact model targets Mandarin rather than the previous multilingual SenseVoice model.
 
 Preview engine license texts are bundled with the generated offline viewer assets. The speech model is bundled with the installer as described above. System Office conversion, where available, runs locally with macro automation disabled.

@@ -2,15 +2,20 @@ use crate::modules::error::AppError;
 use crate::modules::resource_manager::ResourceManager;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
+// macOS 走系统授权窗口提权（modules::macos_privilege），本地不再直接派生子进程，
+// 因此这里的 Stdio 只在 Windows / Linux 分支使用。
+#[cfg(any(windows, target_os = "linux"))]
 use std::process::Stdio;
 use std::sync::Arc;
-use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio::io::{AsyncBufReadExt, AsyncRead, BufReader};
 use tokio::process::{Child, Command};
 use tokio::sync::Mutex;
 use tokio::time::{sleep, Duration};
 
 #[cfg(windows)]
 use crate::modules::privileged_helper::{self, HelperEvent, HelperSession};
+#[cfg(target_os = "macos")]
+use crate::modules::macos_privilege;
 
 /// 检查是否以管理员权限运行（仅 Windows）
 #[cfg(windows)]
@@ -98,6 +103,9 @@ pub struct NetworkService {
     /// Windows 上由窄权限 helper 管理的 EasyTier 会话
     #[cfg(windows)]
     helper_session: Arc<Mutex<Option<HelperSession>>>,
+    /// macOS 上由系统授权窗口以 root 运行的 EasyTier 会话（停止哨兵与运行目录）
+    #[cfg(target_os = "macos")]
+    macos_session: Arc<Mutex<Option<macos_privilege::ElevatedSession>>>,
     /// 网络配置
     config: NetworkConfig,
     /// 当前连接状态
@@ -129,6 +137,8 @@ impl NetworkService {
             easytier_process: Arc::new(Mutex::new(None)),
             #[cfg(windows)]
             helper_session: Arc::new(Mutex::new(None)),
+            #[cfg(target_os = "macos")]
+            macos_session: Arc::new(Mutex::new(None)),
             config,
             status: Arc::new(Mutex::new(ConnectionStatus::Disconnected)),
             virtual_ip: Arc::new(Mutex::new(None)),
@@ -546,8 +556,13 @@ impl NetworkService {
 
         // Windows cleanup and resource materialization are performed by the
         // narrow elevated helper. Unix keeps the existing local cleanup path.
-        #[cfg(not(windows))]
+        #[cfg(target_os = "linux")]
         Self::cleanup_orphan_processes().await;
+
+        // macOS must not use a global pkill: another MCTier instance or a user
+        // running EasyTier independently may own a different utun interface.
+        #[cfg(target_os = "macos")]
+        log::info!("macOS 启动前跳过全局 EasyTier 清理，只管理当前实例");
 
         // 清空上一次的 stderr 缓存
         self.last_stderr.lock().await.clear();
@@ -580,7 +595,10 @@ impl NetworkService {
         {
             // working_dir 在非 Windows 分支没有其他用途，显式消费避免 unused 告警。
             let _ = working_dir;
+            #[cfg(target_os = "linux")]
             log::info!("Linux 平台：EasyTier 使用内核 TUN（/dev/net/tun），无需驱动文件");
+            #[cfg(target_os = "macos")]
+            log::info!("macOS 平台：EasyTier 使用系统 utun 网络接口，无需 WinTun 驱动");
         }
 
         // 生成唯一的实例名称（基于时间戳和随机数）
@@ -851,6 +869,9 @@ impl NetworkService {
             rpc_port
         );
 
+        // Only the Windows privileged-helper path forwards args separately;
+        // every other platform spawns `cmd`, which already carries them.
+        #[cfg(all(windows, not(debug_assertions)))]
         let launch_args = cmd_args.clone();
 
         // Windows 生产模式：使用 privileged helper
@@ -951,7 +972,7 @@ impl NetworkService {
             });
         }
 
-        #[cfg(not(windows))]
+        #[cfg(target_os = "linux")]
         {
             cmd.current_dir(working_dir)
                 .stdout(Stdio::piped())
@@ -1000,6 +1021,92 @@ impl NetworkService {
                 Self::monitor_stderr(stderr, is_running_clone, status_clone2, stderr_buf_clone)
                     .await;
             });
+
+            let process_clone = Arc::clone(&self.easytier_process);
+            let status_clone = Arc::clone(&self.status);
+            let is_running_clone = Arc::clone(&self.is_running);
+            let virtual_ip_clone = Arc::clone(&self.virtual_ip);
+            let stderr_buf_clone2 = Arc::clone(&self.last_stderr);
+            tokio::spawn(async move {
+                Self::monitor_process(
+                    process_clone,
+                    status_clone,
+                    is_running_clone,
+                    virtual_ip_clone,
+                    stderr_buf_clone2,
+                )
+                .await;
+            });
+        }
+
+        // macOS：utun 接口只能由 root 创建，必须通过系统授权窗口提权运行 EasyTier。
+        // 提权细节（FIFO 转发输出、停止哨兵、防孤儿进程）见 modules::macos_privilege。
+        #[cfg(target_os = "macos")]
+        {
+            let launch = macos_privilege::start_elevated(
+                &easytier_path,
+                &cmd_args,
+                working_dir,
+                &instance_name,
+            )
+            .await
+            .map_err(|e| {
+                log::error!("启动 macOS 特权 EasyTier 失败: {}", e);
+                AppError::ProcessError(e)
+            })?;
+
+            *self.macos_session.lock().await = Some(launch.session);
+            *self.easytier_process.lock().await = Some(launch.process);
+            *self.is_running.lock().await = true;
+            *self.instance_config_dir.lock().await = Some(config_dir.clone());
+
+            log::info!("EasyTier 进程已启动（macOS 管理员授权），等待获取虚拟 IP...");
+
+            let virtual_ip_clone = Arc::clone(&self.virtual_ip);
+            let status_clone = Arc::clone(&self.status);
+            let is_running_stdout = Arc::clone(&self.is_running);
+            let stderr_buf_stdout = Arc::clone(&self.last_stderr);
+            tokio::spawn(async move {
+                Self::monitor_stdout(
+                    launch.stdout,
+                    virtual_ip_clone,
+                    status_clone,
+                    is_running_stdout,
+                    stderr_buf_stdout,
+                )
+                .await;
+            });
+
+            // easytier-core 自身的 stderr（经 FIFO 转发）
+            let is_running_clone = Arc::clone(&self.is_running);
+            let status_clone2 = Arc::clone(&self.status);
+            let stderr_buf_clone = Arc::clone(&self.last_stderr);
+            tokio::spawn(async move {
+                Self::monitor_stderr(
+                    launch.stderr,
+                    is_running_clone,
+                    status_clone2,
+                    stderr_buf_clone,
+                )
+                .await;
+            });
+
+            // osascript 自身的 stderr 走同一条监控链路：用户取消授权时
+            // describe_exit_failure 依据这里缓存的 "User canceled." 给出可读提示。
+            if let Some(launcher_stderr) = launch.launcher_stderr {
+                let is_running_clone = Arc::clone(&self.is_running);
+                let status_clone2 = Arc::clone(&self.status);
+                let stderr_buf_clone = Arc::clone(&self.last_stderr);
+                tokio::spawn(async move {
+                    Self::monitor_stderr(
+                        launcher_stderr,
+                        is_running_clone,
+                        status_clone2,
+                        stderr_buf_clone,
+                    )
+                    .await;
+                });
+            }
 
             let process_clone = Arc::clone(&self.easytier_process);
             let status_clone = Arc::clone(&self.status);
@@ -1186,7 +1293,9 @@ impl NetworkService {
     /// 只匹配 `easytier-core` 这个精确名字（-x 全名匹配，不用 -f 匹配整条命令行），
     /// 避免命令行里恰好出现该字样的无关进程被误杀。pkill 无匹配时返回非 0，
     /// 与 Windows 的 taskkill 一致，不视为错误。
-    #[cfg(not(target_os = "windows"))]
+    // Only Linux calls this; macOS deliberately skips the global pkill (see the
+    // call site) so it never kills another instance's utun owner.
+    #[cfg(target_os = "linux")]
     async fn cleanup_orphan_processes() {
         log::info!("🧹 [PreStart] 检查并清理可能残留的孤儿 easytier-core 进程...");
         let output = tokio::process::Command::new("pkill")
@@ -1215,31 +1324,36 @@ impl NetworkService {
     ///
     /// EasyTier 在 Windows 上可能把相同错误写到 stdout、stderr，或通过
     /// 特权 helper 转发；所有入口都调用这个分类器，避免某一路径静默等待超时。
-    fn classify_easytier_failure(line: &str) -> Option<&'static str> {
+    fn classify_easytier_failure(line: &str) -> Option<String> {
         let lower = line.to_ascii_lowercase();
-        if lower.contains("not signed") || lower.contains("error 577") {
-            return Some(
-                "虚拟网卡驱动文件未签名（Windows 错误 577）：请安装有效签名的 WinTun 驱动，并确认安全软件没有替换或拦截驱动",
-            );
-        }
-
-        if lower.contains("拒绝访问")
-            || lower.contains("access is denied")
-            || lower.contains("os error 5")
-            || lower.contains("win32 error 5")
-            || lower.contains("error code: 5")
+        #[cfg(target_os = "windows")]
         {
-            return Some(
-                "EasyTier 创建虚拟网卡时访问被拒绝（Windows 错误 5）：请以管理员身份运行 MCTier，并确认 WinTun 驱动和安全软件权限",
-            );
+            if lower.contains("not signed") || lower.contains("error 577") {
+                return Some("虚拟网卡驱动文件未签名（Windows 错误 577）：请安装有效签名的 WinTun 驱动，并确认安全软件没有替换或拦截驱动".to_string());
+            }
+            if lower.contains("拒绝访问")
+                || lower.contains("access is denied")
+                || lower.contains("os error 5")
+                || lower.contains("win32 error 5")
+                || lower.contains("error code: 5")
+            {
+                return Some("EasyTier 创建虚拟网卡时访问被拒绝（Windows 错误 5）：请以管理员身份运行 MCTier，并确认 WinTun 驱动和安全软件权限".to_string());
+            }
+            if lower.contains("tun device error") || lower.contains("failed to create adapter") {
+                return Some("虚拟网卡创建失败：请右键以管理员身份运行 MCTier，并将本软件加入杀毒软件/防火墙白名单；若仍失败，请确认 WinTun 驱动可用".to_string());
+            }
         }
-
+        #[cfg(target_os = "macos")]
+        if lower.contains("tun device error") || lower.contains("failed to create adapter") {
+            return Some("macOS 虚拟网卡创建失败：EasyTier 需要管理员权限才能创建 utun 接口。请在系统授权窗口中输入管理员密码后重试；若已授权仍失败，请检查是否有其它 VPN/utun 占用，或等上一个大厅的网络接口释放后重试".to_string());
+        }
+        #[cfg(target_os = "linux")]
         if lower.contains("tun device error") || lower.contains("failed to create adapter") {
             return Some(
-                "虚拟网卡创建失败：请右键以管理员身份运行 MCTier，并将本软件加入杀毒软件/防火墙白名单；若仍失败，请确认 WinTun 驱动可用",
+                "Linux TUN 创建失败：请确认 EasyTier 已具备 cap_net_admin，且 /dev/net/tun 可用"
+                    .to_string(),
             );
         }
-
         None
     }
 
@@ -1261,7 +1375,18 @@ impl NetworkService {
             .iter()
             .find_map(|line| Self::classify_easytier_failure(line))
         {
-            return message.to_string();
+            return message;
+        }
+
+        // macOS：管理员授权被取消时 osascript 以 -128 退出并把 "User canceled." 写到
+        // stderr。这是授权问题而非 EasyTier 故障，必须给出可操作的中文提示，
+        // 否则用户只会看到一行英文 execution error。
+        #[cfg(target_os = "macos")]
+        if recent_stderr.iter().any(|line| {
+            let l = line.to_lowercase();
+            l.contains("user canceled") || l.contains("user cancelled") || l.contains("(-128)")
+        }) {
+            return "未能获得管理员授权：macOS 需要管理员权限才能创建 utun 虚拟网卡。请重新创建大厅，并在系统弹窗中输入当前用户的登录密码（点击“取消”或反复输错都会直接导致创建失败）".to_string();
         }
 
         // 端口绑定被拒绝（os error 10013 / WSAEACCES）——常见于二次使用时上一个
@@ -1462,7 +1587,7 @@ impl NetworkService {
         }
         if let Some(message) = Self::classify_easytier_failure(&safe_line) {
             *is_running.lock().await = false;
-            *status.lock().await = ConnectionStatus::Error(message.to_string());
+            *status.lock().await = ConnectionStatus::Error(message);
             return;
         }
         if safe_line.contains("DidNotSwitchProtocols(") {
@@ -1487,13 +1612,18 @@ impl NetworkService {
     /// 注意：easytier-core 2.5.0 将运行日志（包括 `tun device error`、
     /// `Failed to create adapter` 等致命错误）输出到 stdout 而非 stderr，
     /// 因此这里必须同时承担错误检测与最近日志缓存的职责。
-    async fn monitor_stdout(
-        stdout: tokio::process::ChildStdout,
+    ///
+    /// 读取端在 macOS 上不是子进程管道而是 FIFO（root 监管脚本转发），
+    /// 因此这里对读取端类型保持泛型。
+    async fn monitor_stdout<R>(
+        stdout: R,
         virtual_ip: Arc<Mutex<Option<String>>>,
         status: Arc<Mutex<ConnectionStatus>>,
         is_running: Arc<Mutex<bool>>,
         last_stderr: Arc<Mutex<std::collections::VecDeque<String>>>,
-    ) {
+    ) where
+        R: AsyncRead + Unpin,
+    {
         let reader = BufReader::new(stdout);
         let mut lines = reader.lines();
 
@@ -1543,7 +1673,7 @@ impl NetworkService {
             if let Some(message) = Self::classify_easytier_failure(&safe_line) {
                 log::error!("检测到 EasyTier 启动失败: {}", line);
                 *is_running.lock().await = false;
-                *status.lock().await = ConnectionStatus::Error(message.to_string());
+                *status.lock().await = ConnectionStatus::Error(message);
                 continue;
             }
 
@@ -1618,12 +1748,17 @@ impl NetworkService {
     }
 
     /// 监控标准错误
-    async fn monitor_stderr(
-        stderr: tokio::process::ChildStderr,
+    ///
+    /// 与 [`Self::monitor_stdout`] 一样对读取端保持泛型：macOS 上读的是 FIFO，
+    /// 另外 osascript 自身的 stderr 也复用这条链路。
+    async fn monitor_stderr<R>(
+        stderr: R,
         is_running: Arc<Mutex<bool>>,
         status: Arc<Mutex<ConnectionStatus>>,
         last_stderr: Arc<Mutex<std::collections::VecDeque<String>>>,
-    ) {
+    ) where
+        R: AsyncRead + Unpin,
+    {
         let reader = BufReader::new(stderr);
         let mut lines = reader.lines();
 
@@ -1651,7 +1786,7 @@ impl NetworkService {
                 if let Some(message) = Self::classify_easytier_failure(&safe_line) {
                     log::error!("检测到 EasyTier 启动失败: {}", line);
                     *is_running.lock().await = false;
-                    *status.lock().await = ConnectionStatus::Error(message.to_string());
+                    *status.lock().await = ConnectionStatus::Error(message);
                 }
             }
         }
@@ -1837,7 +1972,49 @@ impl NetworkService {
             }
         };
 
-        #[cfg(not(windows))]
+        // macOS：EasyTier 由 root 监管脚本持有，直接 kill osascript 只会杀掉授权进程，
+        // 留下 root 权限的孤儿 easytier-core。必须先写停止哨兵，让 root 侧自己终止子进程，
+        // 再等 osascript 退出后清理运行目录。
+        #[cfg(target_os = "macos")]
+        let graceful_shutdown_success = {
+            let session = self.macos_session.lock().await.take();
+            let mut process_guard = self.easytier_process.lock().await;
+            let mut success = false;
+
+            if let Some(session) = session {
+                macos_privilege::mark_stop(&session);
+
+                if let Some(child) = process_guard.as_mut() {
+                    log::info!("🔄 [StopEasyTier] 正在等待 macOS 特权 EasyTier 退出（最多8秒）...");
+                    match tokio::time::timeout(Duration::from_secs(8), child.wait()).await {
+                        Ok(Ok(status)) => {
+                            log::info!("✅ [StopEasyTier] EasyTier 进程已退出，状态码: {:?}", status);
+                            success = true;
+                        }
+                        Ok(Err(e)) => log::warn!("⚠️ [StopEasyTier] 等待进程退出时出错: {}", e),
+                        Err(_) => log::warn!("⚠️ [StopEasyTier] 等待进程退出超时（8秒）"),
+                    }
+
+                    if !success {
+                        // 监管脚本仍会因停止哨兵退出，这里只兜底回收 osascript。
+                        let _ = child.kill().await;
+                    }
+                } else {
+                    log::info!("ℹ️ [StopEasyTier] EasyTier 进程已不在运行");
+                    success = true;
+                }
+
+                *process_guard = None;
+                macos_privilege::cleanup(&session);
+            } else {
+                log::info!("ℹ️ [StopEasyTier] EasyTier 服务未运行，无需关闭");
+                success = true;
+            }
+
+            success
+        };
+
+        #[cfg(target_os = "linux")]
         let graceful_shutdown_success = {
             let mut process_guard = self.easytier_process.lock().await;
             let mut success = false;
@@ -1880,7 +2057,11 @@ impl NetworkService {
             log::warn!("⚠️ [StopEasyTier] 优雅关闭失败，现在尝试强制终止（taskkill /F）...");
             log::warn!("💡 [StopEasyTier] 这是最后的手段，仅在优雅关闭失败时使用");
 
-            #[cfg(not(windows))]
+            #[cfg(target_os = "macos")]
+            {
+                log::warn!("macOS EasyTier 进程未能优雅退出；不会使用全局 pkill，避免影响其他实例");
+            }
+            #[cfg(target_os = "linux")]
             {
                 let _ = tokio::process::Command::new("pkill")
                     .args(["-9", "-x", "easytier-core"])
@@ -1893,6 +2074,11 @@ impl NetworkService {
         log::info!("⏳ [StopEasyTier] 等待进程完全退出（300ms）...");
         sleep(Duration::from_millis(300)).await;
         log::info!("✅ [StopEasyTier] 进程退出等待完成");
+
+        // macOS utun teardown is asynchronous; give the system a short window
+        // before a subsequent lobby reuses the same network resources.
+        #[cfg(target_os = "macos")]
+        sleep(Duration::from_millis(800)).await;
 
         // 【已废弃】不再使用CLI工具清理实例
         // easytier-cli已移除，通过taskkill直接终止进程
@@ -2117,34 +2303,68 @@ mod tests {
 
     #[test]
     fn test_classify_easytier_driver_failures() {
-        let unsigned = NetworkService::classify_easytier_failure("The file is not signed.")
-            .expect("unsigned driver should fail fast");
-        assert!(unsigned.contains("未签名"));
+        #[cfg(target_os = "windows")]
+        {
+            let unsigned = NetworkService::classify_easytier_failure("The file is not signed.")
+                .expect("unsigned driver should fail fast");
+            assert!(unsigned.contains("未签名"));
 
-        let denied = NetworkService::classify_easytier_failure(
-            "create adapter failed: 拒绝访问。 (os error 5)",
-        )
-        .expect("access denied should fail fast");
-        assert!(denied.contains("访问被拒绝"));
+            let denied = NetworkService::classify_easytier_failure(
+                "create adapter failed: 拒绝访问。 (os error 5)",
+            )
+            .expect("access denied should fail fast");
+            assert!(denied.contains("访问被拒绝"));
+        }
 
         let tun = NetworkService::classify_easytier_failure("tun device error")
             .expect("tun failure should be classified");
+        // 各平台文案不同：Windows/macOS 用"虚拟网卡创建失败"，Linux 用 cap_net_admin
+        // 相关的专属文案。断言必须按平台分开，否则在 Linux 上会误报失败。
+        #[cfg(any(target_os = "windows", target_os = "macos"))]
         assert!(tun.contains("虚拟网卡创建失败"));
+        // macOS 的文案必须只讲 macOS 的成因（管理员授权 / utun 冲突），
+        // 不能把 Windows 的 WinTun 驱动或"以管理员身份运行"照搬过来。
+        #[cfg(target_os = "macos")]
+        assert!(!tun.contains("WinTun"));
+        #[cfg(target_os = "macos")]
+        assert!(!tun.contains("以管理员身份运行"));
+        #[cfg(target_os = "macos")]
+        assert!(tun.contains("管理员权限"));
+        #[cfg(target_os = "linux")]
+        assert!(tun.contains("Linux TUN 创建失败"));
     }
 
     #[test]
-    fn test_describe_exit_failure_prioritizes_driver_and_access_errors() {
-        let unsigned = NetworkService::describe_exit_failure(
-            Some(1),
-            &["Error: The file is not signed.".to_string()],
-        );
-        assert!(unsigned.contains("未签名"));
+    fn test_describe_exit_failure_prioritizes_platform_errors() {
+        #[cfg(target_os = "windows")]
+        {
+            let unsigned = NetworkService::describe_exit_failure(
+                Some(1),
+                &["Error: The file is not signed.".to_string()],
+            );
+            assert!(unsigned.contains("未签名"));
 
-        let denied = NetworkService::describe_exit_failure(
-            Some(1),
-            &["拒绝访问。 (os error 5)".to_string()],
-        );
-        assert!(denied.contains("访问被拒绝"));
+            let denied = NetworkService::describe_exit_failure(
+                Some(1),
+                &["拒绝访问。 (os error 5)".to_string()],
+            );
+            assert!(denied.contains("访问被拒绝"));
+        }
+
+        #[cfg(target_os = "macos")]
+        {
+            let tun =
+                NetworkService::describe_exit_failure(Some(1), &["tun device error".to_string()]);
+            assert!(tun.contains("macOS"));
+            assert!(!tun.contains("WinTun") && !tun.contains("以管理员身份运行"));
+
+            // 用户取消管理员授权时 osascript 的 stderr 必须转成可操作的中文提示，
+            // 而不是把 "execution error: User canceled. (-128)" 原样抛给用户。
+            let canceled =
+                NetworkService::describe_exit_failure(Some(-128), &["execution error: User canceled. (-128)".to_string()]);
+            assert!(canceled.contains("管理员授权"));
+            assert!(!canceled.contains("User canceled"));
+        }
     }
 
     #[test]

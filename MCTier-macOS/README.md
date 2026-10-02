@@ -12,8 +12,11 @@ This directory contains the macOS build and native-resource preparation scripts.
 - Tauri `.app`/`.dmg` packaging is configured for macOS 11+.
 - Apple Silicon (`aarch64-apple-darwin`) is the primary target; Intel uses `x86_64-apple-darwin`.
 - macOS networking requires EasyTier `easytier-core` and `easytier-cli` built as matching Mach-O executables.
+- Creating the `utun` adapter requires root, so `easytier-core` is launched through the system administrator authorization prompt (see below). The MCTier UI itself stays unprivileged.
 - The repository intentionally does not fall back to Linux ELF binaries and does not claim virtual-LAN support until those resources are verified.
-- Microphone, screen recording, accessibility permissions, firewall behavior, signing, and notarization require on-device validation.
+- The macOS main window uses native decorations and the standard left-side red/yellow/green traffic lights. The yellow button minimizes to the Dock and the green button zooms or enters native full screen; the main page uses a desktop-sized responsive layout instead of the compact 320px form.
+- Secondary overlays (screen viewer, danmaku, and game HUD) retain their dedicated transparent/overlay behavior.
+- The traffic-light, Cmd+W/Cmd+Q, multi-monitor restore, Retina sizing, and full-screen behavior require on-device validation.
 
 ## Prepare EasyTier
 
@@ -43,6 +46,35 @@ runs the pinned source build when these files are absent.
 
 The corresponding EasyTier source is LGPL-3.0. Record the printed commit and
 SHA-256 values with any release artifact before distributing it.
+
+## Administrator authorization when creating or joining a lobby
+
+macOS only lets a root process create a `utun` interface, so an unprivileged
+`easytier-core` fails immediately with
+`rust tun error Operation not permitted (os error 1)`. MCTier therefore does not
+spawn `easytier-core` directly: on every lobby start it asks macOS for
+administrator authorization with
+`osascript -e 'do shell script "..." with administrator privileges'` and runs a
+small supervisor script as root. The supervisor
+
+- forwards `easytier-core` stdout/stderr through FIFOs so the normal log
+  parsing and virtual-IP detection are unchanged;
+- terminates `easytier-core` when the app writes a stop sentinel **or** when
+  the MCTier process itself disappears, so quitting or crashing the app never
+  leaves a root-owned orphan process or a stuck `utun` interface.
+
+The authorization dialog asks for the current user's login password. Each lobby
+start spawns a fresh `osascript` process with a different script body, and macOS
+only reuses an authorization cache for the same compiled script in the same
+process, so **expect one prompt per lobby start**. The frontend warns about the
+prompt in the "connecting" toast; cancelling the dialog fails the lobby with a
+dedicated message instead of silently retrying.
+
+Only `easytier-core` runs as root. The MCTier UI, the WebView, and all chat and
+voice code stay unprivileged, and no privileged helper is installed
+permanently. Delivering a signed SMAppService / SMJobBless helper is the way to
+reduce this to a single authorization per install, and is deliberately left for a
+signed release.
 
 ## One-click DMG build
 

@@ -1,3 +1,22 @@
+@media (min-width: 760px) {
+  :root[data-platform='macos'] .lobby-form-container {
+    min-height: 0;
+    height: 100%;
+    padding: 72px clamp(32px, 6vw, 96px) 48px;
+    overflow-y: auto;
+    overflow-x: hidden;
+    align-items: flex-start;
+  }
+
+  :root[data-platform='macos'] .lobby-form-card {
+    width: min(100%, 760px);
+    max-width: 760px;
+    min-width: 0;
+    margin: auto;
+    padding: 36px 44px 44px;
+  }
+}
+
 .lobby-form-container {
   display: flex;
   justify-content: center;

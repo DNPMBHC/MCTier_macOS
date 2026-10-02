@@ -8,13 +8,12 @@
   <p>
     <img src="https://img.shields.io/badge/version-3.7.0-blue?style=flat-square" alt="Version">
     <img src="https://img.shields.io/badge/Windows-10%20%2F%2011-2ea44f?style=flat-square" alt="Windows 10/11">
-    <img src="https://img.shields.io/badge/macOS-preview-555555?style=flat-square" alt="macOS preview">
     <img src="https://img.shields.io/badge/Android-supported-3ddc84?style=flat-square" alt="Android">
     <img src="https://img.shields.io/badge/license-Custom-orange?style=flat-square" alt="License">
   </p>
 
 
-  **Supports Windows 10/11, macOS (preview), and Android. Desktop and mobile can join the same lobby to quickly form a cross-network virtual LAN.**
+  **Supports Windows 10/11 and Android. Desktop and mobile can join the same lobby to quickly form a cross-network virtual LAN.**
 
   [GitHub](https://github.com/pmh1314520/MCTier) · [Gitee](https://gitee.com/peng-minghang/mctier) · [Quick Start](#quick-start) · [Screenshots](#screenshots) · [Sponsor](#sponsor)
 
@@ -183,7 +182,6 @@ Screenshots are grouped by desktop and mobile and laid out compactly to avoid an
 | Platform | Requirements |
 | --- | --- |
 | Windows | Windows 10/11 64-bit, 2GB+ RAM recommended |
-| macOS (preview) | macOS 11+, Apple Silicon preferred; verified EasyTier Mach-O binaries required |
 | Linux | Debian-family distributions (Debian / Ubuntu / Deepin / UOS / Mint), x86_64 |
 | Android | Android phone or tablet, Android 8.0+ recommended |
 | Network | Able to reach the configured EasyTier node and WebRTC signaling server |
@@ -195,7 +193,6 @@ Download the latest build from [GitHub Releases](https://github.com/pmh1314520/M
 - Windows Installer: download `MCTier_x.y.z_x64-setup.exe` and double-click to install.
 - Windows Portable: download `MCTier.exe` and run it directly.
 - Android: download `MCTier-Android.apk` and install it on your phone.
-- macOS (preview): run `./MCTier-macOS/scripts/build.sh --ui-only` on a Mac to build the UI bundle first. For virtual networking, prepare the matching EasyTier Mach-O binaries and validate them with `./MCTier-macOS/scripts/fetch-binaries.sh`. The script never falls back to Linux ELF files; unsigned/notarized-free builds are for local testing only.
 - Linux (Debian family): see [MCTier-Linux/README.md](MCTier-Linux/README.md) for build and packaging steps. The app itself runs as a normal user and only needs `cap_net_admin` granted once to `easytier-core`; voice, screen sharing and remote control are not yet usable on stock Debian — see the per-feature status matrix in that directory.
 
 ### Create or Join a Lobby
@@ -269,34 +266,6 @@ npm run tauri build -- --bundles nsis --ci
 ```
 
 Desktop release builds generate the NSIS installer only. This avoids processing the offline WebView2 installer twice when MSI is also enabled. The repository's one-click version update tool prepares the pinned Node runtime and uses the same NSIS arguments.
-
-#### macOS preview build
-
-This macOS adaptation and one-click DMG entry point are maintained in
-[DNPMBHC/MCTier_macOS](https://github.com/DNPMBHC/MCTier_macOS). The original MCTier author, copyright, and license information remain unchanged.
-
-macOS provides a source-build script that builds matching Mach-O binaries from the pinned EasyTier v2.5.0 commit:
-
-```bash
-./MCTier-macOS/scripts/build-easytier.sh
-./MCTier-macOS/scripts/fetch-binaries.sh
-./MCTier-macOS/scripts/build.sh
-```
-
-The scripts verify the source commit, target architecture, Mach-O type, `--version` output, and SHA-256 before installing the files. Use `--source /path/to/EasyTier` to reuse an audited local checkout. A full build invokes the pinned source build automatically when the binaries are missing; `--ui-only` remains available for a UI-only validation package.
-
-```bash
-./MCTier-macOS/scripts/fetch-binaries.sh
-./MCTier-macOS/scripts/build.sh
-```
-
-To validate only the macOS UI and app bundle without EasyTier binaries:
-
-```bash
-./MCTier-macOS/scripts/build.sh --ui-only
-```
-
-`--ui-only` does not provide virtual networking, remote ComfyUI access, or port forwarding. Production distribution also requires Apple Developer ID signing and notarization; unsigned builds are for local testing only.
 
 The Android source code is located at:
 

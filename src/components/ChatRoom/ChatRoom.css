@@ -201,7 +201,40 @@
 .message-content-voice { background: transparent !important; padding: 0 !important; }
 .message-content-file { background: transparent !important; padding: 0 !important; }
 .message-content-file:has(.chat-image, .chat-visual-attachment)::after { display: none; }
-.chat-visual-attachment { position: relative; display: grid; place-items: center; width: min(280px, calc(100vw - 142px)); height: 190px; overflow: hidden; padding: 0; border: 0; border-radius: 12px; background: #07090c; color: #fff; cursor: pointer; text-align: left; }
+@media (min-width: 760px) {
+  :root[data-platform='macos'] .file-preview-modal {
+    padding: max(24px, env(safe-area-inset-top, 0px)) max(24px, env(safe-area-inset-right, 0px)) max(24px, env(safe-area-inset-bottom, 0px)) max(24px, env(safe-area-inset-left, 0px));
+  }
+
+  :root[data-platform='macos'] .file-preview-panel {
+    width: min(880px, calc(100% - 48px));
+    height: min(680px, calc(100% - 48px));
+    max-width: 100%;
+    max-height: 100%;
+  }
+
+  :root[data-platform='macos'] .chat-visual-attachment {
+    width: min(100%, 520px);
+    max-width: 100%;
+  }
+}
+
+.chat-visual-attachment {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: min(280px, calc(100vw - 142px));
+  height: 190px;
+  overflow: hidden;
+  padding: 0;
+  border: 0;
+  border-radius: 12px;
+  background: #07090c;
+  color: #fff;
+  cursor: pointer;
+  text-align: left;
+}
+
 .chat-visual-attachment>img,.chat-visual-attachment>video { display: block; width: 100%; height: 100%; object-fit: contain; background: #07090c; }
 .chat-visual-attachment.kind-image>img { background: transparent; }
 .chat-visual-attachment.loading { align-content: center; gap: 8px; background: color-mix(in srgb, var(--panel-bg, #242833) 88%, #000); color: color-mix(in srgb, var(--text-color) 70%, transparent); }

@@ -31,11 +31,14 @@ command -v file >/dev/null 2>&1 || fail "需要 macOS file 命令"
 for binary in "${CORE}" "${CLI}"; do
   description="$(file -b "${binary}")"
   case "${description}" in
-    *Mach-O*executable*|*Mach-O*64-bit*) ;;
-    *) fail "${binary} 不是可执行 Mach-O 文件: ${description}" ;;
+    "Mach-O 64-bit executable arm64") [[ "${TARGET}" == "aarch64-apple-darwin" ]] || fail "${binary} 架构不是 ${TARGET}" ;;
+    "Mach-O 64-bit executable x86_64") [[ "${TARGET}" == "x86_64-apple-darwin" ]] || fail "${binary} 架构不是 ${TARGET}" ;;
+    *) fail "${binary} 不是目标架构的可执行 Mach-O 文件: ${description}" ;;
   esac
+  version_output="$(${binary} --version 2>&1)" || fail "${binary} --version 执行失败"
+  [[ "${version_output}" == *"2.5.0"* ]] || fail "${binary} EasyTier 版本不是 2.5.0: ${version_output}"
   chmod 0755 "${binary}"
-  printf '[OK] %s: %s\n' "${binary}" "${description}"
+  printf '[OK] %s: %s; %s\n' "${binary}" "${description}" "${version_output}"
 done
 
 printf '\nmacOS EasyTier 二进制已就位: %s\n' "${TARGET_DIR}"
