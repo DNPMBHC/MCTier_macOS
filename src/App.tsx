@@ -32,6 +32,7 @@ import { recoverVirtualAddress, isVirtualIpConflict } from './services/lobby/vir
 import type { UserConfig } from './types';
 import {
   THEME_CHANGED_EVENT,
+  THEME_STORAGE_KEY,
   isThemePreference,
   readThemePreference,
   resolveTheme,
@@ -39,6 +40,10 @@ import {
 } from './theme/themePreference';
 import { isSafeResourceId, sanitizeUntrustedText } from './security/trustBoundary';
 import './App.css';
+import { syncBuiltinEmojiItems } from './services/emoji/emojiLibrary';
+import { NativeCapturePicker } from './components/NativeCapture/NativeCapture';
+import { startQuarkSupport } from './services/quarkSupport';
+import { QuarkStartupPrompt } from './components/QuarkSupport/QuarkStartupPrompt';
 
 // 与 MainWindow/MiniWindow 的模块级 isMacOS 判定保持同一时序：模块加载时同步写入
 // data-platform，避免首帧缺少 macOS 安全区/内边距导致的布局跳动。
@@ -48,6 +53,9 @@ if (typeof document !== 'undefined' && typeof navigator !== 'undefined') {
 }
 
 function App() {
+  useEffect(() => {
+    if (getCurrentWindow().label === 'main') void startQuarkSupport();
+  }, []);
   const search = window.location.search;
   if (search.includes('danmaku=true')) return <DanmakuOverlay />;
   if (search.includes('gamehud=true')) return <GameHudOverlay />;
@@ -79,9 +87,14 @@ function useResolvedTheme(): ThemePreference {
     };
     media.addEventListener('change', handleSystemTheme);
     window.addEventListener(THEME_CHANGED_EVENT, handlePreference);
+    const handleStorage = (event: StorageEvent) => {
+      if (event.key === THEME_STORAGE_KEY && isThemePreference(event.newValue)) setThemePreference(event.newValue);
+    };
+    window.addEventListener('storage', handleStorage);
     return () => {
       media.removeEventListener('change', handleSystemTheme);
       window.removeEventListener(THEME_CHANGED_EVENT, handlePreference);
+      window.removeEventListener('storage', handleStorage);
     };
   }, []);
 
@@ -135,6 +148,9 @@ function ScreenViewerWindow() {
 }
 
 function MainWindowApp() {
+  useEffect(() => {
+    void syncBuiltinEmojiItems().catch(error => console.warn('启动时准备内置表情失败，可在表情面板重试:', error));
+  }, []);
   useLanguagePreference();
   const effectiveTheme = useResolvedTheme();
   const { i18n } = useTranslation();
@@ -745,7 +761,9 @@ function MainWindowApp() {
           });
 
           webrtcClient.onMuteChanged((playerId, muted) => {
-            useAppStore.getState().setHostMuted(playerId, muted);
+            const store = useAppStore.getState();
+            store.setHostMuted(playerId, muted);
+            if (muted && playerId === store.currentPlayerId) store.setMicEnabled(false);
           });
 
           webrtcClient.onLobbyOptionsChanged((maxPlayers, isPublic) => {
@@ -871,6 +889,7 @@ function MainWindowApp() {
       >
         <AntdApp>
           <FeedbackHost />
+          <NativeCapturePicker />
           <GlobalTooltip />
           <GlobalButtonTheme />
           <div className="app-container">
@@ -879,6 +898,7 @@ function MainWindowApp() {
           </div>
 
           {/* 版本更新提示弹窗 */}
+          <QuarkStartupPrompt versionVisible={showVersionModal} />
           {versionInfo && (
             <VersionUpdateModal
               visible={showVersionModal}
@@ -892,7 +912,7 @@ function MainWindowApp() {
           <Modal
             className="microphone-permission-modal"
             open={showMicrophonePermissionHelp}
-            title={tl('麦克风权限未授予', 'Microphone permission is not granted')}
+            title={tl('无法使用麦克风', 'Microphone unavailable')}
             onCancel={() => setShowMicrophonePermissionHelp(false)}
             footer={
               <div className="microphone-permission-actions">
@@ -902,21 +922,10 @@ function MainWindowApp() {
                     navigator.platform.includes('Mac') ? 'Open macOS Microphone Settings' : 'Open Windows microphone settings'
                   )}
                 </Button>
-                <Button
-                  type="primary"
-                  onClick={() => {
-                    // macOS 的 reset_microphone_permission 只是再打开系统设置，与左侧按钮重复；
-                    // 这里改为关闭弹窗让用户授权后返回重试，不再谎称"在应用内重新检查"。
-                    if (navigator.platform.includes('Mac')) {
-                      setShowMicrophonePermissionHelp(false);
-                    } else {
-                      void invoke('reset_microphone_permission');
-                    }
-                  }}
-                >
+                <Button type="primary" onClick={() => setShowMicrophonePermissionHelp(false)}>
                   {tl(
-                    navigator.platform.includes('Mac') ? '我已授权，关闭' : '一键重置并重启',
-                    navigator.platform.includes('Mac') ? "I've granted — close" : 'Reset and restart'
+                    navigator.platform.includes('Mac') ? '我已授权，关闭' : '知道了',
+                    navigator.platform.includes('Mac') ? "I've granted — close" : 'Got it'
                   )}
                 </Button>
               </div>
@@ -931,15 +940,18 @@ function MainWindowApp() {
                     'Allow MCTier under System Settings > Privacy & Security > Microphone, then return and retry. macOS manages this permission and the app will not delete system WebView data.'
                   )
                 : tl(
-                    '如果首次申请时选择了拒绝，WebView2 可能不会再次弹出授权窗口。可先检查 Windows 麦克风隐私设置；仍无法授权时，点击“一键重置并重启”，MCTier 会清理自身的 EBWebView 权限缓存并重新申请。',
-                    'If access was denied the first time, WebView2 may not show the prompt again. Check Windows microphone privacy settings first. If that does not help, reset and restart MCTier to clear its EBWebView permission cache and request access again.'
+                    '请检查麦克风是否连接、是否被其它程序独占，以及 Windows 是否允许桌面应用访问麦克风。修复后重新点击开麦或录音即可，无需重置软件。',
+                    'Check that your microphone is connected, is not exclusively used by another app, and Windows allows desktop apps to access it. Then try the microphone or recording again; no app reset is needed.'
                   )}
             </p>
-            <p style={{ opacity: 0.68, marginBottom: 0 }}>
-              {navigator.platform.includes('Mac')
-                ? tl('更改权限后可能需要重新启动应用或再次发起语音请求。', 'After changing the permission, restart the app or retry the voice request.')
-                : tl('重置只会清理 MCTier 的 WebView2 浏览数据，不会删除大厅配置。', 'The reset only clears MCTier WebView2 browsing data. Lobby settings are preserved.')}
-            </p>
+            {navigator.platform.includes('Mac') && (
+              <p style={{ opacity: 0.68, marginBottom: 0 }}>
+                {tl(
+                  '更改权限后可能需要重新启动应用或再次发起语音请求。',
+                  'After changing the permission, restart the app or retry the voice request.'
+                )}
+              </p>
+            )}
           </Modal>
         </AntdApp>
       </ConfigProvider>

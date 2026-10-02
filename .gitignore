@@ -98,6 +98,7 @@ Thumbs.db
 /public/file-preview/
 /MCTier-Android/app/src/main/assets/file-preview/
 /shared/generated/
+/shared/image-optimizer/target/
 /.emoji-build/
 
 # Local exports, scratch files and credentials are not source code.
@@ -147,3 +148,5 @@ build-paths.local.json
 MCTier-macOS/build-logs/
 MCTier-macOS/**/*.dmg
 MCTier-macOS/**/*.app/
+
+/public/pdfjs/

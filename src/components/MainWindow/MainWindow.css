@@ -16,6 +16,12 @@
   app-region: drag;
 }
 
+/* macOS 的交通灯固定在左上角（trafficLightPosition 16,14），Quark 入口按默认的
+   left:14px 会压在上面，这里右移让开三个按钮的宽度。 */
+.main-window.macos-desktop-window .quark-entry {
+  left: 92px;
+}
+
 .main-window.macos-desktop-window .main-window-content {
   width: min(100%, 1040px);
   max-width: 1040px;
