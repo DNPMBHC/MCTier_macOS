@@ -340,7 +340,8 @@ mod remote_input_security_tests {
 mod macos_core_graphics {
     use super::RemoteInputEvent;
     use core_graphics::event::{
-        CGEvent, CGEventTapLocation, CGEventType, CGMouseButton, KeyCode, ScrollEventUnit,
+        CGEvent, CGEventTapLocation, CGEventType, CGMouseButton, EventField, KeyCode,
+        ScrollEventUnit,
     };
     use core_graphics::event_source::{CGEventSource, CGEventSourceStateID};
     use core_graphics::geometry::CGPoint;
@@ -505,6 +506,27 @@ mod macos_core_graphics {
             .map_err(|_| "无法创建 macOS 鼠标事件".to_string())
     }
 
+    /// 鼠标按键 + 是否按下 → 对应的 Quartz 事件类型。
+    fn button_event_type(button: CGMouseButton, down: bool) -> CGEventType {
+        match (button, down) {
+            (CGMouseButton::Left, true) => CGEventType::LeftMouseDown,
+            (CGMouseButton::Left, false) => CGEventType::LeftMouseUp,
+            (CGMouseButton::Right, true) => CGEventType::RightMouseDown,
+            (CGMouseButton::Right, false) => CGEventType::RightMouseUp,
+            (CGMouseButton::Center, true) => CGEventType::OtherMouseDown,
+            (CGMouseButton::Center, false) => CGEventType::OtherMouseUp,
+        }
+    }
+
+    /// 当前系统光标位置。相对位移和"原地按键"都不能改变绝对坐标，
+    /// CoreGraphics 又没有只带增量的鼠标事件，所以要用它当锚点。
+    /// `CGEventCreate` 创建的裸事件不带类型，其 location 字段就是当前光标位置。
+    fn cursor_anchor(source: &CGEventSource) -> Result<CGPoint, String> {
+        CGEvent::new(source.clone())
+            .map(|event| event.location())
+            .map_err(|_| "无法读取 macOS 光标位置".to_string())
+    }
+
     pub fn inject(events: &[RemoteInputEvent]) -> Result<(), String> {
         if !accessibility_trusted() {
             return Err("macOS Accessibility permission required: open System Settings > Privacy & Security > Accessibility".to_string());
@@ -512,6 +534,31 @@ mod macos_core_graphics {
         let source = source()?;
         for event in events {
             match event {
+                RemoteInputEvent::RelativeMove { dx, dy } => {
+                    // 手机端的相对视角移动：锚点取当前光标，只写增量字段，
+                    // 因此系统光标不会跳到 (0,0)，接收方按 DELTA 处理。
+                    let anchor = cursor_anchor(&source)?;
+                    let event = CGEvent::new_mouse_event(
+                        source.clone(),
+                        CGEventType::MouseMoved,
+                        anchor,
+                        CGMouseButton::Left,
+                    )
+                    .map_err(|_| "无法创建 macOS 相对移动事件".to_string())?;
+                    event.set_integer_value_field(EventField::MOUSE_EVENT_DELTA_X, *dx as i64);
+                    event.set_integer_value_field(EventField::MOUSE_EVENT_DELTA_Y, *dy as i64);
+                    event.post(CGEventTapLocation::Session);
+                }
+                RemoteInputEvent::RelativeButton { button, down } => {
+                    let button = mouse_button(*button)?;
+                    let anchor = cursor_anchor(&source)?;
+                    post_mouse(
+                        source.clone(),
+                        button_event_type(button, *down),
+                        anchor,
+                        button,
+                    )?;
+                }
                 RemoteInputEvent::MouseMove { x, y } => {
                     post_mouse(
                         source.clone(),
@@ -522,21 +569,21 @@ mod macos_core_graphics {
                 }
                 RemoteInputEvent::MouseDown { button, x, y } => {
                     let button = mouse_button(*button)?;
-                    let kind = match button {
-                        CGMouseButton::Left => CGEventType::LeftMouseDown,
-                        CGMouseButton::Right => CGEventType::RightMouseDown,
-                        CGMouseButton::Center => CGEventType::OtherMouseDown,
-                    };
-                    post_mouse(source.clone(), kind, point(*x, *y), button)?;
+                    post_mouse(
+                        source.clone(),
+                        button_event_type(button, true),
+                        point(*x, *y),
+                        button,
+                    )?;
                 }
                 RemoteInputEvent::MouseUp { button, x, y } => {
                     let button = mouse_button(*button)?;
-                    let kind = match button {
-                        CGMouseButton::Left => CGEventType::LeftMouseUp,
-                        CGMouseButton::Right => CGEventType::RightMouseUp,
-                        CGMouseButton::Center => CGEventType::OtherMouseUp,
-                    };
-                    post_mouse(source.clone(), kind, point(*x, *y), button)?;
+                    post_mouse(
+                        source.clone(),
+                        button_event_type(button, false),
+                        point(*x, *y),
+                        button,
+                    )?;
                 }
                 RemoteInputEvent::MouseWheel { dx, dy } => {
                     let event = CGEvent::new_scroll_event(

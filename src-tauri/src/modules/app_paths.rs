@@ -186,9 +186,19 @@ fn files_equal(left: &Path, right: &Path) -> io::Result<bool> {
 mod tests {
     use super::*;
 
+    /// 迁移逻辑拒绝跟随符号链接祖先（见 [`check_plain_path`]）。macOS 上
+    /// `std::env::temp_dir()` 返回 `/var/folders/...`，而 `/var` 是指向
+    /// `/private/var` 的符号链接，直接用会让下面每个用例都以
+    /// “迁移时不跟随符号链接: /var” 失败。先把基目录规范化，让祖先链中不含符号链接。
+    fn plain_tempdir() -> tempfile::TempDir {
+        let base = std::env::temp_dir();
+        let base = base.canonicalize().unwrap_or(base);
+        tempfile::tempdir_in(base).unwrap()
+    }
+
     #[test]
     fn migration_preserves_config_logs_nested_files_and_conflicts() {
-        let temp = tempfile::tempdir().unwrap();
+        let temp = plain_tempdir();
         let source = temp.path().join("old");
         let root = temp.path().join(APP_ID);
         fs::create_dir_all(source.join("avatar-cache")).unwrap();
@@ -220,7 +230,7 @@ mod tests {
 
     #[test]
     fn interrupted_migration_and_repeated_conflicts_do_not_overwrite() {
-        let temp = tempfile::tempdir().unwrap();
+        let temp = plain_tempdir();
         let source = temp.path().join("old");
         let root = temp.path().join("new");
         let backup = root.join("legacy-migration/old");
@@ -243,7 +253,7 @@ mod tests {
 
     #[test]
     fn existing_complete_copy_is_reused_and_conflicting_target_is_not_deleted() {
-        let temp = tempfile::tempdir().unwrap();
+        let temp = plain_tempdir();
         let source = temp.path().join("source");
         let target = temp.path().join("target");
         fs::write(&source, "complete").unwrap();
