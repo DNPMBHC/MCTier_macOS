@@ -24,6 +24,10 @@ fi
 fail() { printf '错误: %s\n' "$*" >&2; exit 1; }
 log() { printf '%s\n' "$*"; }
 
+# shellcheck source=MCTier-macOS/scripts/toolchain.sh
+source "${SCRIPT_DIR}/toolchain.sh"
+mctier_require_macos_toolchain || exit 1
+
 command -v git >/dev/null 2>&1 || fail '缺少 git'
 command -v cargo >/dev/null 2>&1 || fail '缺少 Rust cargo。请先安装 rustup 和 stable toolchain。'
 command -v rustc >/dev/null 2>&1 || fail '缺少 Rust rustc。请先安装 rustup 和 stable toolchain。'

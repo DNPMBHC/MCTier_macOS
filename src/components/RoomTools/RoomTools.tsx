@@ -2,9 +2,7 @@
  * 房间内小工具
  * - 掷骰子：结果广播到聊天室（适合跑团/抽签/决定顺序）
  * - 倒计时：基于全局服务计时，切换界面/挂后台不中断，到点提醒
- * - 待办清单：多人协同，可勾选完成 / 分配给玩家 / 删除，实时同步全队
- * - 共享剪贴板：把坐标/指令一键同步给全队
- * - 共享白板：在白板上画标记并实时同步
+ * - 待办清单：多人协同，可勾选完成 / 删除，实时同步全队
  */
 
 import React, { useState, useEffect } from 'react';
@@ -158,7 +156,6 @@ export const RoomTools: React.FC<RoomToolsProps> = ({ visible, onClose, onOpenWo
     commitTodos(todos.filter((t) => !t.done));
   };
 
-  // ===== 共享剪贴板 =====
   const remainingCount = todos.filter((t) => !t.done).length;
 
   const diceTab = (

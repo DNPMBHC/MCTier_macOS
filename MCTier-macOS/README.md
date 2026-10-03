@@ -113,6 +113,34 @@ To validate only the Tauri UI/app bundle without EasyTier binaries:
 
 A UI-only package cannot create a virtual network, access a remote ComfyUI instance, or use MCTier port forwarding.
 
+## Troubleshooting: `cc: exit status 69` during the Rust link step
+
+Updating macOS or Xcode revokes the previously accepted Xcode license. Until it is
+accepted again, `xcrun` cannot report an SDK path and the failure surfaces far from
+its cause: the final link step dies with `exit status 69` and the only clue is a
+one-line license notice buried in the cargo output. The same gate also breaks
+`git`, `cc`, and `lipo`, so an unrelated command may fail first.
+
+`scripts/toolchain.sh`, sourced by `build.sh` and `build-easytier.sh`, detects this
+before any compilation starts and automatically falls back to the Command Line
+Tools, which are a separate install with their own license:
+
+```text
+警告: Xcode 当前不可用，已自动改用 Command Line Tools 工具链。
+        SDK: /Library/Developer/CommandLineTools/SDKs/MacOSX.sdk
+        如需恢复使用 Xcode，请执行: sudo xcodebuild -license accept
+```
+
+To go back to building with Xcode itself, accept the license once (it needs your
+password, so the build scripts cannot do it for you):
+
+```bash
+sudo xcodebuild -license accept
+```
+
+Both toolchains produce a valid build; the fallback exists so an Xcode update does
+not block packaging.
+
 ## Distribution
 
 Unsigned and unnotarized packages are for local testing. A public release needs an Apple Developer ID application certificate, hardened runtime/entitlements as required by the selected native features, and Apple notarization. macOS users may also need to grant Microphone, Screen Recording, and Accessibility permissions in System Settings.

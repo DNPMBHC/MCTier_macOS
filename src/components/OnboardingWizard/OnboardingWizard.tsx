@@ -1,8 +1,9 @@
 /**
  * 新手引导 / 连接向导
  * - 首次启动自动弹出，逐步检测运行环境，降低组网失败门槛
- * - 检测项：管理员权限、防火墙放行规则、安全软件拦截
- * - 提供一键修复：以管理员重启、自动添加防火墙规则
+ * - 检测项：管理员权限（Windows）、防火墙放行规则、安全软件拦截
+ * - 提供一键修复：以管理员重启、自动添加防火墙规则（均为 Windows 专属；
+ *   macOS 通过系统授权助手按需提权，管理员/防火墙检查直接通过）
  */
 
 import React, { useState, useEffect, useCallback } from 'react';
@@ -22,6 +23,9 @@ import './OnboardingWizard.css';
 const { Title, Paragraph, Text } = Typography;
 
 const ONBOARDING_KEY = 'mctier_onboarding_done';
+
+// macOS 通过授权助手按需提权运行 EasyTier，无需整个应用以管理员身份运行
+const isMacOS = /Mac|iPhone|iPad|iPod/.test(navigator.platform);
 
 /** 标记是否已完成过引导（供外部判断首启） */
 export function isOnboardingDone(): boolean {
@@ -69,10 +73,14 @@ export const OnboardingWizard: React.FC<OnboardingWizardProps> = ({ visible, onC
     setChecks({ admin: 'checking', firewall: 'checking', security: 'checking', securityList: [] });
 
     let admin: CheckState = 'warn';
-    try {
-      admin = (await invoke<boolean>('is_admin')) ? 'ok' : 'warn';
-    } catch {
-      admin = 'warn';
+    if (isMacOS) {
+      admin = 'ok';
+    } else {
+      try {
+        admin = (await invoke<boolean>('is_admin')) ? 'ok' : 'warn';
+      } catch {
+        admin = 'warn';
+      }
     }
 
     let firewall: CheckState = 'warn';
@@ -168,7 +176,11 @@ export const OnboardingWizard: React.FC<OnboardingWizardProps> = ({ visible, onC
       <Alert
         type="info"
         showIcon
-        message={tl('建议以管理员身份运行 MCTier，可显著降低组网失败概率。', 'Running MCTier as administrator greatly reduces networking failures.')}
+        message={
+          isMacOS
+            ? tl('macOS 首次组网时可能弹出授权确认，允许 MCTier 运行网络组件即可。', 'macOS may ask for authorization when networking starts; just allow MCTier to run its network components.')
+            : tl('建议以管理员身份运行 MCTier，可显著降低组网失败概率。', 'Running MCTier as administrator greatly reduces networking failures.')
+        }
       />
     </div>
   );
@@ -186,7 +198,9 @@ export const OnboardingWizard: React.FC<OnboardingWizardProps> = ({ visible, onC
         tl('管理员权限', 'Administrator'),
         checks.admin,
         checks.admin === 'ok'
-          ? tl('已以管理员身份运行，网络配置权限充足。', 'Running as administrator with sufficient network permissions.')
+          ? isMacOS
+            ? tl('macOS 会通过系统授权按需提权运行网络组件，无需管理员身份。', 'macOS elevates network components through system authorization on demand; no administrator needed.')
+            : tl('已以管理员身份运行，网络配置权限充足。', 'Running as administrator with sufficient network permissions.')
           : tl('当前非管理员身份，创建虚拟网卡/写入 hosts 可能失败，建议以管理员重启。', 'Not running as administrator; creating the virtual adapter or writing hosts may fail. Restart as administrator.')
       )}
       {checkRow(
@@ -194,7 +208,9 @@ export const OnboardingWizard: React.FC<OnboardingWizardProps> = ({ visible, onC
         tl('防火墙放行', 'Firewall'),
         checks.firewall,
         checks.firewall === 'ok'
-          ? tl('已检测到 MCTier 的防火墙放行规则。', 'MCTier firewall rules detected.')
+          ? isMacOS
+            ? tl('macOS 使用系统防火墙，MCTier 无需修改防火墙规则。', 'macOS uses the system firewall; MCTier does not need to modify firewall rules.')
+            : tl('已检测到 MCTier 的防火墙放行规则。', 'MCTier firewall rules detected.')
           : tl('未检测到放行规则，Windows 防火墙可能阻止联机，建议一键放行。', 'No firewall rules found; Windows Firewall may block connections. Add them with one click.')
       )}
       {checkRow(
@@ -218,7 +234,7 @@ export const OnboardingWizard: React.FC<OnboardingWizardProps> = ({ visible, onC
             {tl('一键放行防火墙', 'Allow through firewall')}
           </Button>
         )}
-        {checks.admin !== 'ok' && (
+        {!isMacOS && checks.admin !== 'ok' && (
           <Button danger disabled={allChecking} onClick={() => void handleRestartAdmin()}>
             {tl('以管理员身份重启', 'Restart as admin')}
           </Button>

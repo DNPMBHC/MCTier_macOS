@@ -73,10 +73,21 @@ export const ScreenShareManager: React.FC = () => {
 
     checkActiveShare();
 
-    // 【修复】监听屏幕共享错误事件（例如密码错误）
-    const handleScreenShareError = (event: any) => {
-      const { error } = event.detail;
-      console.error('❌ [ScreenShareManager] 屏幕共享错误:', error);
+    // 【修复】监听屏幕共享错误事件（例如密码错误）。
+    // 信令异步推送的失败不会走 requestViewScreen 的 reject 路径，
+    // 这里负责退出连接态并把真实原因展示给用户，避免干等 30s 超时。
+    const handleScreenShareError = (event: Event) => {
+      const detail = (event as CustomEvent<{ shareId?: string; error?: string }>).detail || {};
+      const errorText = detail.error || tl('未知错误', 'Unknown error');
+      console.error('❌ [ScreenShareManager] 屏幕共享错误:', errorText);
+      if (detail.shareId && activeView.current === detail.shareId) {
+        ++viewRequestGeneration.current;
+        screenShareService.stopViewingScreen(detail.shareId);
+        activeView.current = null;
+        setViewingShareId(null);
+        setPendingStream(null);
+      }
+      message.error(`${tl('屏幕共享失败', 'Screen share failed')}: ${errorText}`);
     };
 
     window.addEventListener('screen-share-error', handleScreenShareError);
