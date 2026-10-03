@@ -97,3 +97,5 @@ pub mod linux_platform;
 // macOS 平台支撑（网卡检测 / LaunchAgent 自启动）
 #[cfg(target_os = "macos")]
 pub mod macos_platform;
+
+pub mod screen_recording;
