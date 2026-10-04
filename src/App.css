@@ -75,17 +75,64 @@ body {
 /* <html> 没有确定高度时，`height/min-height: 100%` 会逐层退化成 auto：整棵树只剩
    内容高度，主窗口既不铺满窗口也不垂直居中，底部会露出一条背景带（首页尤其明显），
    内容比窗口高时还会因为 html/body 的 overflow:hidden 被裁掉而无法滚动。
-   这里用视口单位给容器一个确定高度，滚动交给 .app-container 自己。 */
+   这里用视口单位给容器一个确定高度，滚动交给 .app-container 自己。
+   overscroll-behavior: none 关掉 macOS 橡皮筋回弹——回弹会露出滚动容器之外的
+   透明区域（原生窗口底色），看起来像界面边缘闪白。 */
 :root[data-platform='macos'] .app-container {
   height: 100vh;
   min-height: 100vh;
   overflow: auto;
+  overscroll-behavior: none;
   padding-top: env(safe-area-inset-top, 0px);
   padding-bottom: env(safe-area-inset-bottom, 0px);
 }
 
 :root[data-platform='macos'] .app-container > * {
   min-height: 0;
+}
+
+/* ========================================
+   macOS 原生观感
+   ======================================== */
+
+/* macOS 的滚动条惯例是叠加式细条：轨道透明、半透明圆角 thumb、悬停加深。
+   全局那条 8px 深色轨道是 Windows 观感，在 mac 上尤其突兀。 */
+:root[data-platform='macos'] ::-webkit-scrollbar {
+  width: 7px;
+  height: 7px;
+}
+
+:root[data-platform='macos'] ::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+:root[data-platform='macos'] ::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.24);
+  border-radius: 4px;
+}
+
+:root[data-platform='macos'] ::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.4);
+}
+
+html[data-theme='light'][data-platform='macos'] ::-webkit-scrollbar-thumb {
+  background: rgba(24, 32, 43, 0.26);
+}
+
+html[data-theme='light'][data-platform='macos'] ::-webkit-scrollbar-thumb:hover {
+  background: rgba(24, 32, 43, 0.42);
+}
+
+/* 文本选择沿用主题绿，替代 WKWebView 默认的系统蓝。 */
+:root[data-platform='macos'] ::selection {
+  background: rgba(126, 211, 33, 0.32);
+}
+
+/* 键盘焦点环与横排桌面窗口的既有规则保持一致（绿色、offset 3px），
+   竖屏与设置页此前落回 WKWebView 默认蓝色光晕。 */
+:root[data-platform='macos'] :focus-visible {
+  outline: 2px solid rgba(126, 211, 33, 0.9);
+  outline-offset: 3px;
 }
 
 /* 现代化滚动条 */

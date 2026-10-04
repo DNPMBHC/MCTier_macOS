@@ -4,7 +4,9 @@
   padding: 72px clamp(32px, 6vw, 96px) 48px;
   justify-content: flex-start;
   overflow: auto;
-  background: #151722;
+  /* 与竖屏共用同一渐变背景：此前横排是更深的实色 #151722，
+     拖宽窗口时背景会突然变深，两种形态看起来像两个应用。 */
+  background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
 }
 
 .main-window.macos-desktop-window .main-window-drag-area {
@@ -14,6 +16,12 @@
   pointer-events: auto;
   -webkit-app-region: drag;
   app-region: drag;
+}
+
+/* 标题字体栈写的是 Segoe UI / Microsoft YaHei（Windows 字体），macOS 上逐级
+   落空到通用 sans-serif；这里显式给系统栈，CJK 走 PingFang，避免回退不一致。 */
+:root[data-platform='macos'] .main-window-title {
+  font-family: -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Hiragino Sans GB', sans-serif;
 }
 
 /* macOS 的交通灯固定在左上角（trafficLightPosition 16,14），Quark 入口按默认的
