@@ -83,12 +83,20 @@ fn merge_directory(source: &Path, destination: &Path, conflicts: &Path) -> io::R
         let entry = entry?;
         let from = entry.path();
         check_plain_path(&from)?;
+        let file_type = entry.file_type()?;
+        // FIFO / socket / 设备节点不能迁移：File::open 会一直等在 open() 上直到有另一端，
+        // 迁移发生在建窗之前，卡住就等于应用启动不了（macOS 提权助手留下的 stdout.fifo
+        // 就会这样）。这类条目原样留在旧目录里，交给用户自行清理。
+        if !file_type.is_dir() && !file_type.is_file() {
+            log::warn!("迁移时跳过非普通文件: {}", from.display());
+            continue;
+        }
         let to = destination.join(entry.file_name());
         let backup = conflicts.join(entry.file_name());
         if to.exists() {
             check_plain_path(&to)?;
         }
-        if entry.file_type()?.is_dir() {
+        if file_type.is_dir() {
             if to.exists() && !to.is_dir() {
                 merge_directory(&from, &backup, &backup.with_extension("conflicts"))?;
             } else {
@@ -116,7 +124,11 @@ fn merge_directory(source: &Path, destination: &Path, conflicts: &Path) -> io::R
         }
     }
     // Only remove an empty legacy directory, never recursively discard old data.
-    fs::remove_dir(source)
+    // 被跳过的非普通文件会让目录保持非空，那不算迁移失败。
+    if fs::read_dir(source)?.next().is_none() {
+        fs::remove_dir(source)?;
+    }
+    Ok(())
 }
 
 fn move_file(source: &Path, target: &Path) -> io::Result<()> {
@@ -251,6 +263,50 @@ mod tests {
         fs::write(source.join("config"), "second").unwrap();
         merge_directory(&source, &root, &backup).unwrap();
         assert!(!backup.join("config.2").exists());
+    }
+
+    /// macOS 提权助手会在旧数据目录里留下 `stdout.fifo`。迁移必须跳过这类非普通文件：
+    /// `File::open` 会一直等在 `open()` 上直到出现写端，而迁移发生在建窗之前，卡住就
+    /// 等于应用再也启动不了（升级后点图标毫无反应，只能用 Activity Monitor 结束）。
+    #[cfg(unix)]
+    #[test]
+    fn migration_skips_fifo_instead_of_blocking_on_open() {
+        let temp = plain_tempdir();
+        let source = temp.path().join("old");
+        let root = temp.path().join(APP_ID);
+        fs::create_dir_all(source.join("privileged")).unwrap();
+        fs::create_dir_all(&root).unwrap();
+        fs::write(source.join("mctier.log"), "previous log").unwrap();
+        let fifo = source.join("privileged/stdout.fifo");
+        assert!(std::process::Command::new("mkfifo")
+            .arg(&fifo)
+            .status()
+            .unwrap()
+            .success());
+
+        let backup = root.join("legacy-migration/old");
+        // 回归前这里会永久阻塞，用超时把「挂死」变成一条明确的失败信息。
+        let (thread_source, thread_root, thread_backup) =
+            (source.clone(), root.clone(), backup.clone());
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = tx.send(merge_directory(
+                &thread_source,
+                &thread_root,
+                &thread_backup,
+            ));
+        });
+        rx.recv_timeout(std::time::Duration::from_secs(10))
+            .expect("迁移在 FIFO 上阻塞：非普通文件应当跳过而不是打开")
+            .unwrap();
+
+        assert_eq!(
+            fs::read_to_string(root.join("mctier.log")).unwrap(),
+            "previous log"
+        );
+        // FIFO 原样留在旧目录里：不迁移、不删除，目录非空也不算迁移失败。
+        assert!(fifo.exists());
+        assert!(source.exists());
     }
 
     #[test]

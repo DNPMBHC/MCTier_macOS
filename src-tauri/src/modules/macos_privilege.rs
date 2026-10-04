@@ -95,10 +95,14 @@ pub struct ElevatedLaunch {
     pub launcher_stderr: Option<ChildStderr>,
 }
 
+/// 提权运行目录。必须和 [`crate::modules::app_paths::data_root`] 共用同一个根：
+/// 早期版本把它建在 `~/Library/Application Support/MCTier`，于是应用一边把数据迁到
+/// `com.mctier.app`，一边又往那个旧目录里写 `privileged/mctier-*/stdout.fifo`。
+/// 下次启动时数据迁移会扫到这些 FIFO，而 `open()` 会一直等到出现写端，应用在创建
+/// 窗口之前就永久卡住——表现就是双击图标毫无反应。
 fn runtime_root() -> PathBuf {
-    dirs::data_local_dir()
-        .unwrap_or_else(std::env::temp_dir)
-        .join("MCTier")
+    crate::modules::app_paths::data_root()
+        .unwrap_or_else(|_| std::env::temp_dir().join(crate::modules::app_paths::APP_ID))
         .join("privileged")
 }
 
@@ -356,6 +360,27 @@ fn applescript_escape(command: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 提权运行目录必须落在应用数据根之下。它曾经写死在
+    /// `~/Library/Application Support/MCTier`，于是每次提权都在旧目录里留下
+    /// `privileged/mctier-*/stdout.fifo`，下次启动的数据迁移扫到这些 FIFO 就会
+    /// 永久阻塞在 `open()` 上，应用再也打不开。
+    #[test]
+    fn runtime_root_lives_under_the_app_data_root() {
+        let root = runtime_root();
+        let data_root = crate::modules::app_paths::data_root().expect("data root");
+        assert!(
+            root.starts_with(&data_root),
+            "提权运行目录 {} 必须位于应用数据根 {} 之下",
+            root.display(),
+            data_root.display()
+        );
+        assert_ne!(
+            root.parent().and_then(|parent| parent.file_name()),
+            Some(std::ffi::OsStr::new("MCTier")),
+            "提权运行目录不得写在旧版数据目录 MCTier/ 下"
+        );
+    }
 
     #[test]
     fn shell_quote_wraps_and_escapes_single_quotes() {

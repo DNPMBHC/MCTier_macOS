@@ -142,6 +142,23 @@ sudo xcodebuild -license accept
 Both toolchains produce a valid build; the fallback exists so an Xcode update does
 not block packaging.
 
+## Troubleshooting: MCTier never opens a window
+
+Legacy data migration runs before the WebView is created, so anything that blocks
+inside it looks like the app refusing to start: clicking the icon does nothing, no
+window ever appears, and `mctier.log` stays empty.
+
+The trigger was the administrator-authorization supervisor writing its session
+directory to `~/Library/Application Support/MCTier/privileged/` while application
+data lives under `~/Library/Application Support/com.mctier.app/`. Shell FIFOs
+cannot be opened until the other end exists, so migration walking that leftover
+directory blocked forever on `open()`. Two changes close this off:
+
+- the supervisor now creates its sessions under the application data root, so it
+  no longer writes into the legacy directory at all;
+- migration skips FIFO, socket, and device entries and leaves them in place
+  instead of hanging on them, which also clears directories left by older builds.
+
 ## Distribution
 
 Unsigned and unnotarized packages are for local testing. A public release needs an Apple Developer ID application certificate, hardened runtime/entitlements as required by the selected native features, and Apple notarization. macOS users may also need to grant Microphone, Screen Recording, and Accessibility permissions in System Settings.
