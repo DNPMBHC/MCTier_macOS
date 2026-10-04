@@ -7,12 +7,16 @@ import ts from 'typescript';
 const code = ts.transpileModule(fs.readFileSync('src/services/voice/nativeMicrophone.ts', 'utf8'), {
   compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
 }).outputText;
+// 平台判定在模块作用域读取 navigator.platform，必须按用例注入，否则 macOS 分支永远走不到。
+const platformCode = ts.transpileModule(fs.readFileSync('src/utils/platform.ts', 'utf8'), {
+  compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
+}).outputText;
 const flush = async () => { for (let i = 0; i < 40; i++) await Promise.resolve(); };
 const levelContext = vm.createContext({ exports: {} });
 vm.runInContext(ts.transpileModule(fs.readFileSync('src/services/voice/microphoneLevel.ts', 'utf8'), {
   compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
 }).outputText, levelContext);
-function setup({ native = true, moduleFailure = false, startFailure = null, resumeMode = 'running', timers = { setTimeout, clearTimeout } } = {}) {
+function setup({ native = true, moduleFailure = false, startFailure = null, resumeMode = 'running', platform = 'Linux x86_64', timers = { setTimeout, clearTimeout } } = {}) {
   const calls = [], reads = [], nodes = [], contexts = [], browser = [];
   const window = new EventTarget();
   class Track extends EventTarget {
@@ -45,15 +49,17 @@ function setup({ native = true, moduleFailure = false, startFailure = null, resu
     calls.push([command, args]);
     if (command === 'native_microphone_supported') return native;
     if (command === 'native_microphone_devices') return [{ deviceId: 'wasapi:mic', kind: 'audioinput', label: 'Mic' }];
-    if (command === 'native_microphone_start') {
+    if (command === 'native_microphone_start' || command === 'recording_system_audio_start') {
       if (startFailure) throw startFailure;
       return { id: 'capture', deviceId: 'wasapi:mic', sampleRate: 48000 };
     }
     if (command === 'native_microphone_read') return new Promise((resolve, reject) => reads.push({ resolve, reject }));
   } };
-  const context = vm.createContext({ exports: {}, require: path => path.includes('microphoneLevel') ? levelContext.exports : path.includes('worklet') || path.includes('Worklet') ? { default: 'worklet.js' } : api,
+  const platformContext = vm.createContext({ exports: {}, navigator: { platform } });
+  vm.runInContext(platformCode, platformContext);
+  const context = vm.createContext({ exports: {}, require: path => path.includes('microphoneLevel') ? levelContext.exports : path.includes('platform') ? platformContext.exports : path.includes('worklet') || path.includes('Worklet') ? { default: 'worklet.js' } : api,
     AudioContext: Context, AudioWorkletNode: Worklet, ArrayBuffer, DOMException, Event, window, console, ...timers,
-    navigator: { mediaDevices: { getUserMedia: async options => { browser.push(options); return stream; } } },
+    navigator: { platform, mediaDevices: { getUserMedia: async options => { browser.push(options); return stream; } } },
   });
   vm.runInContext(code, context);
   return { api: context.exports, calls, reads, nodes, contexts, browser, track, window };
@@ -150,6 +156,34 @@ test('other desktop backends retain their browser media path', async () => {
   const f = setup({ native: false }); await f.api.openMicrophone('linux-mic');
   assert.equal(f.browser[0].audio.deviceId.ideal, 'linux-mic');
   assert.ok(!f.calls.some(([name]) => name === 'native_microphone_start'));
+});
+
+test('macOS keeps the microphone usable when the native unit cannot open', async () => {
+  const f = setup({ platform: 'MacIntel', startFailure: new Error('音频输入单元初始化失败') });
+  const stream = await f.api.openMicrophone('coreaudio:BuiltInMicrophoneDevice', true);
+  assert.equal(f.browser.length, 1, '原生失败后应当回退到浏览器采集');
+  // coreaudio: 前缀是 CoreAudio 的 UID，浏览器不认识，回退只能用系统默认设备。
+  assert.equal(f.browser[0].audio.deviceId, undefined);
+  assert.equal(stream.getAudioTracks()[0].readyState, 'live');
+});
+
+test('macOS never falls back for system audio, which only the native path can capture', async () => {
+  const f = setup({ platform: 'MacIntel', startFailure: new Error('需要虚拟音频设备（如 BlackHole）') });
+  await assert.rejects(f.api.openMicrophone('', true, true, true), /BlackHole/);
+  assert.equal(f.browser.length, 0);
+});
+
+test('macOS stays on the native path while it works', async () => {
+  const f = setup({ platform: 'MacIntel' });
+  await f.api.openMicrophone('coreaudio:BuiltInMicrophoneDevice');
+  assert.equal(f.browser.length, 0);
+  assert.equal(f.calls.find(([name]) => name === 'native_microphone_start')[1].deviceId, 'coreaudio:BuiltInMicrophoneDevice');
+});
+
+test('Windows never falls back to the browser on a native failure', async () => {
+  const f = setup({ platform: 'Win32', startFailure: 'Windows privacy blocked' });
+  await assert.rejects(f.api.openMicrophone(), /Windows privacy blocked/);
+  assert.equal(f.browser.length, 0);
 });
 
 test('recording accepts batched PCM and backpressures by audio duration, not IPC count', async () => {

@@ -1,6 +1,7 @@
 import { invoke, isTauri } from '@tauri-apps/api/core';
 import workletUrl from './nativeMicrophoneWorklet.js?url&no-inline';
 import { pcmRms } from './microphoneLevel';
+import { isMacOSPlatform } from '../../utils/platform';
 
 const nativeLevels = new WeakMap<MediaStream, number>();
 /** Undefined for browser streams; native values come directly from WASAPI PCM. */
@@ -34,15 +35,38 @@ export async function microphoneDevices(): Promise<MicrophoneDevice[]> {
   return (await navigator.mediaDevices.enumerateDevices()).filter(device => device.kind === 'audioinput');
 }
 
+/** 浏览器采集。平台没有原生实现时用它；macOS 上原生单元打不开时也用它兜底。 */
+function openBrowserMicrophone(deviceId: string, systemProcessing: boolean): Promise<MediaStream> {
+  return navigator.mediaDevices.getUserMedia({ audio: {
+    ...(deviceId ? { deviceId: { ideal: deviceId } } : {}),
+    echoCancellation: true, noiseSuppression: systemProcessing, autoGainControl: true,
+  }, video: false });
+}
+
 export async function openMicrophone(deviceId = '', systemProcessing = true, loopback = false, recording = false): Promise<MediaStream> {
   if (!(await nativeMicrophoneSupported())) {
-    if (loopback) throw new Error('System audio recording requires Windows');
-    return navigator.mediaDevices.getUserMedia({ audio: {
-      ...(deviceId ? { deviceId: { ideal: deviceId } } : {}),
-      echoCancellation: true, noiseSuppression: systemProcessing, autoGainControl: true,
-    }, video: false });
+    if (loopback) {
+      throw new Error(isMacOSPlatform
+        ? 'macOS 录制系统声音需要虚拟音频设备（如 BlackHole）'
+        : 'System audio recording requires Windows');
+    }
+    return openBrowserMicrophone(deviceId, systemProcessing);
   }
-  // Windows never falls back to browser capture, including on native errors.
+  try {
+    return await openNativeMicrophone(deviceId, systemProcessing, loopback, recording);
+  } catch (error) {
+    // Windows 绝不回退到浏览器采集：绕开 WebView2 的麦克风链路正是原生采集存在的理由。
+    // macOS 保留浏览器这条路——原生单元打不开（未授权、设备被占用）时用户至少还有
+    // 麦可用，而不是整个语音功能直接失效。系统声音只能走原生，失败就如实报错。
+    if (!isMacOSPlatform || loopback) throw error;
+    diagnostic('capture-error', `native capture failed, falling back to browser: ${String(error)}`);
+    console.warn('原生麦克风不可用，回退到浏览器采集:', error);
+    // 设备 id 是 coreaudio: 前缀的 UID，浏览器不认识，回退时只能用系统默认设备。
+    return openBrowserMicrophone('', systemProcessing);
+  }
+}
+
+async function openNativeMicrophone(deviceId: string, systemProcessing: boolean, loopback: boolean, recording: boolean): Promise<MediaStream> {
   const info = await invoke<{ id: string; deviceId: string; sampleRate: number }>(loopback ? 'recording_system_audio_start' : 'native_microphone_start', { deviceId, systemProcessing, recording }).catch(error => {
     diagnostic('capture-error', String(error));
     if (String(error).startsWith('MIC_NOT_FOUND:')) throw new DOMException(String(error).slice(14), 'NotFoundError');

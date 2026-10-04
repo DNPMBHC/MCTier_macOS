@@ -17,7 +17,8 @@ This directory contains the macOS build and native-resource preparation scripts.
 - The macOS main window uses native decorations and the standard left-side red/yellow/green traffic lights. It opens in the compact portrait layout (420×680) and switches to the desktop two-column layout once the window is dragged to 760px or wider; dragging back below that restores portrait. The breakpoint lives in `src/utils/windowLayout.ts` and is mirrored by `@media (min-width: 760px)` in the macOS CSS, so the JS form and the stylesheet always agree. The green button zooms or enters native full screen.
 - Hiding the window (the in-app minimize button, the summon hotkey, or the tray menu) keeps MCTier running in the menu bar. Clicking the menu bar icon, the Dock icon, or reopening the app all restore it — macOS reports the latter two as a `Reopen` event, which the Rust side handles explicitly. Without that handler the window could be hidden or minimized with no way to bring it back.
 - Secondary overlays (screen viewer, danmaku, and game HUD) retain their dedicated transparent/overlay behavior.
-- The traffic-light, Cmd+W/Cmd+Q, multi-monitor restore, Retina sizing, full-screen, and portrait/landscape layout switching behavior require on-device validation.
+- Microphone capture has a native CoreAudio path, matching the Windows WASAPI one (see below). Native screen capture does not: Windows Graphics Capture has no macOS counterpart yet, so screen sharing keeps using the browser's `getDisplayMedia` picker.
+- The traffic-light, Cmd+W/Cmd+Q, multi-monitor restore, Retina sizing, full-screen, portrait/landscape layout switching, and microphone capture behavior require on-device validation.
 
 ## Prepare EasyTier
 
@@ -76,6 +77,38 @@ voice code stay unprivileged, and no privileged helper is installed
 permanently. Delivering a signed SMAppService / SMJobBless helper is the way to
 reduce this to a single authorization per install, and is deliberately left for a
 signed release.
+
+## Microphone and audio
+
+Microphone capture has a native macOS path in
+`src-tauri/src/modules/native_microphone/macos.rs`, matching what WASAPI does on
+Windows. It is a CoreAudio HAL output unit in input-only mode, driven through the
+C AudioUnit and AudioObject APIs (declared locally, so no extra crate is pulled in).
+
+- Devices come from the CoreAudio object API and are identified by their stable
+  UID (`coreaudio:<uid>`), so replugging a device does not invalidate a saved
+  selection. Only endpoints with input streams are listed.
+- Audio is delivered in exactly the same packets as Windows: 48 kHz mono float32,
+  960 samples (3840 bytes) per 20 ms packet. The frontend AudioWorklet pump and its
+  packet validation are unchanged. A device that refuses the 48 kHz client format
+  is resampled to it rather than played back at the wrong speed.
+- `system_processing` selects the system voice-processing unit, which is where
+  macOS applies echo cancellation and noise suppression. If that unit cannot be
+  opened, capture falls back to the plain HAL unit with a log warning.
+
+Unlike Windows, macOS keeps the browser capture path as a safety net: when the
+native unit cannot be opened the frontend falls back to `getUserMedia` rather than
+losing the microphone entirely. Windows deliberately does not, because bypassing
+the WebView2 microphone chain is the reason the native path exists there.
+
+Recording what the machine **plays** is not supported. CoreAudio has no
+per-application system-audio tap, and capturing playback would need
+ScreenCaptureKit audio (macOS 13+) plus an Objective-C binding. The recording path
+reports that instead of quietly recording the microphone; installing a virtual
+output device such as BlackHole and selecting it as the input is the workaround.
+
+The native capture path itself has not been validated against live audio yet — only
+device enumeration runs unattended, since it needs no microphone authorization.
 
 ## One-click DMG build
 

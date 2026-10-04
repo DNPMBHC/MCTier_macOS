@@ -1,4 +1,4 @@
-use super::{InputDevice, Reply};
+use super::{push_packet, read_size, InputDevice, MonoResampler, Reply, CAPACITY, CHUNK};
 use std::{
     collections::VecDeque,
     sync::{
@@ -55,36 +55,6 @@ pub fn devices() -> Result<Vec<InputDevice>, String> {
         }
     }
     Ok(devices)
-}
-const CHUNK: usize = 960 * 4;
-const CAPACITY: usize = CHUNK * 5;
-fn read_size(queued: usize, recording: bool) -> usize {
-    (queued / CHUNK).min(if recording { 10 } else { 5 }) * CHUNK
-}
-fn push_packet(queue: &mut VecDeque<u8>, bytes: &[u8]) {
-    // Drop old samples on a stalled consumer rather than accumulating seconds of speech.
-    queue.extend(bytes);
-    if queue.len() > CAPACITY {
-        queue.drain(..queue.len() - CAPACITY);
-    }
-}
-struct MonoResampler { samples: Vec<f32>, position: f64, step: f64 }
-impl MonoResampler {
-    fn new(rate: u32) -> Self { Self { samples: Vec::new(), position: 0.0, step: rate as f64 / 48000.0 } }
-    fn convert(&mut self, samples: impl Iterator<Item = f32>) -> Vec<u8> {
-        self.samples.extend(samples);
-        let mut out = Vec::new();
-        while self.position + 1.0 < self.samples.len() as f64 {
-            let i = self.position as usize;
-            let fraction = (self.position - i as f64) as f32;
-            let value = self.samples[i] * (1.0 - fraction) + self.samples[i + 1] * fraction;
-            out.extend_from_slice(&value.clamp(-1.0, 1.0).to_le_bytes());
-            self.position += self.step;
-        }
-        let consumed = (self.position as usize).min(self.samples.len());
-        self.samples.drain(..consumed); self.position -= consumed as f64;
-        out
-    }
 }
 struct Running(IAudioClient);
 impl Drop for Running {
