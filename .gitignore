@@ -151,4 +151,5 @@ MCTier-macOS/build-logs/
 MCTier-macOS/**/*.dmg
 MCTier-macOS/**/*.app/
 
+signing.local.json
 /public/pdfjs/
