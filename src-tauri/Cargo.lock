@@ -3192,6 +3192,7 @@ dependencies = [
  "calamine",
  "chrono",
  "cookie_store",
+ "core-foundation 0.10.1",
  "core-graphics",
  "dashmap",
  "dirs 5.0.1",

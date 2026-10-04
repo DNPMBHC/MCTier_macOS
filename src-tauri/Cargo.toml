@@ -84,6 +84,8 @@ webkit2gtk = { version = "2.0", features = ["v2_40"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 core-graphics = { version = "0.25", features = ["highsierra"] }
+# 屏幕采集枚举窗口用 CFArray/CFString；版本跟随 core-graphics 自身的 core-foundation。
+core-foundation = "0.10"
 
 [target.'cfg(windows)'.dependencies]
 webview2-com = "0.38.2"

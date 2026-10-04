@@ -254,6 +254,10 @@ pub fn remote_inject_input(
     }
     #[cfg(target_os = "macos")]
     {
+        // 与 Windows 一致：只有本机屏幕正被共享时才允许注入，防止绕过用户可见的共享状态静默操控。
+        if !super::native_capture::remote_capture_active() {
+            return Err("本地屏幕采集已停止，拒绝远程输入".into());
+        }
         macos_core_graphics::inject(&events)
     }
     #[cfg(not(any(target_os = "windows", target_os = "linux", target_os = "macos")))]

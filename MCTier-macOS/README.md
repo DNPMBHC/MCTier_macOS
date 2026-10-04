@@ -17,8 +17,8 @@ This directory contains the macOS build and native-resource preparation scripts.
 - The macOS main window uses native decorations and the standard left-side red/yellow/green traffic lights. It opens in the compact portrait layout (420×680) and switches to the desktop two-column layout once the window is dragged to 760px or wider; dragging back below that restores portrait. The breakpoint lives in `src/utils/windowLayout.ts` and is mirrored by `@media (min-width: 760px)` in the macOS CSS, so the JS form and the stylesheet always agree. The green button zooms or enters native full screen.
 - Hiding the window (the in-app minimize button, the summon hotkey, or the tray menu) keeps MCTier running in the menu bar. Clicking the menu bar icon, the Dock icon, or reopening the app all restore it — macOS reports the latter two as a `Reopen` event, which the Rust side handles explicitly. Without that handler the window could be hidden or minimized with no way to bring it back.
 - Secondary overlays (screen viewer, danmaku, and game HUD) retain their dedicated transparent/overlay behavior.
-- Microphone capture has a native CoreAudio path, matching the Windows WASAPI one (see below). Native screen capture does not: Windows Graphics Capture has no macOS counterpart yet, so screen sharing keeps using the browser's `getDisplayMedia` picker.
-- The traffic-light, Cmd+W/Cmd+Q, multi-monitor restore, Retina sizing, full-screen, portrait/landscape layout switching, and microphone capture behavior require on-device validation.
+- Microphone capture has a native CoreAudio path, matching the Windows WASAPI one (see below). Native screen capture has a CoreGraphics path (`src-tauri/src/modules/native_capture/macos.rs`) matching the Windows Graphics Capture one: display and window sources, requested-resolution scaling, and the same binary frame packets. macOS requires the user to grant Screen Recording permission first (see below).
+- The traffic-light, Cmd+W/Cmd+Q, multi-monitor restore, Retina sizing, full-screen, portrait/landscape layout switching, microphone capture, and native screen capture behavior require on-device validation.
 
 ## Prepare EasyTier
 
@@ -146,6 +146,41 @@ To validate only the Tauri UI/app bundle without EasyTier binaries:
 ```
 
 A UI-only package cannot create a virtual network, access a remote ComfyUI instance, or use MCTier port forwarding.
+
+## Native screen capture (displays and windows)
+
+Screen sharing, recording, and being remote-controlled use the same native
+capture backend as Windows, implemented with CoreGraphics in
+`src-tauri/src/modules/native_capture/macos.rs`:
+
+- Displays come from `CGGetActiveDisplayList` (pixel dimensions via
+  `CGDisplayPixelsWide/High`), windows from `CGWindowListCopyWindowInfo`
+  (on-screen, layer 0, other processes, non-empty and non-transparent). Without
+  Screen Recording permission macOS hides other apps' window titles, so entries
+  fall back to the owning application's name.
+- Every frame is a snapshot: `CGDisplayCreateImage` for displays,
+  `CGWindowListCreateImage` for windows, drawn into a reused RGBA bitmap context
+  scaled to the requested 720p–2160p quality. The packet contract
+  (`[u32 LE width][u32 LE height][RGBA8]`) is identical to the Windows one, so
+  the frontend pump, `MediaStreamTrackGenerator` bridge, and WebRTC path are
+  unchanged. A unit test pins the top-down row order so the remote side never
+  sees an upside-down screen.
+- Screen Recording is a TCC gate: without it these APIs silently return images
+  without window content, so `native_capture_sources` preflights
+  (`CGPreflightScreenCaptureAccess`), asks the system to prompt once, and fails
+  with a message pointing at「系统设置 › 隐私与安全性 › 屏幕录制」. A grant only
+  takes effect after the app is restarted.
+- Differences from Windows: cursor is not drawn into the frames, and minimizing
+  a shared window ends that capture instead of freezing it. Being
+  remote-controlled additionally requires an active local capture session —
+  the same rule Windows enforces before injecting input.
+- The legacy CoreGraphics symbols are marked obsoleted in the macOS 15 SDK but
+  still resolve and work at runtime (verified present on macOS 26). If Apple
+  ever removes them, the migration path is ScreenCaptureKit (macOS 13+) behind
+  the same `platform` module interface.
+- Live validation needs Screen Recording permission granted to the host
+  terminal: `cargo test --lib native_capture -- --include-ignored`. Unpermissioned
+  runs skip themselves instead of popping the system dialog.
 
 ## Troubleshooting: `cc: exit status 69` during the Rust link step
 

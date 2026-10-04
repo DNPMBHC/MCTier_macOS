@@ -87,11 +87,11 @@ fn output_size(width: u32, height: u32, resolution: u32) -> (u32, u32) {
 #[tauri::command]
 pub async fn native_capture_sources(window: WebviewWindow) -> Result<Vec<Source>, String> {
     authorize(&window)?;
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "macos"))]
     return tokio::task::spawn_blocking(platform::sources)
         .await
         .map_err(|e| e.to_string())?;
-    #[cfg(not(windows))]
+    #[cfg(not(any(windows, target_os = "macos")))]
     Err("原生屏幕共享需要 Windows 10 1903 或更高版本".into())
 }
 
@@ -106,7 +106,7 @@ pub async fn native_capture_start(
 ) -> Result<CaptureInfo, String> {
     authorize(&window)?;
     validate_quality(resolution, frame_rate)?;
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "macos"))]
     {
         let source = platform::sources()?
             .into_iter()
@@ -177,9 +177,9 @@ pub async fn native_capture_start(
             }
         }
     }
-    #[cfg(not(windows))]
+    #[cfg(not(any(windows, target_os = "macos")))]
     {
-        let _ = (source_id, remote);
+        let _ = (source_id, remote, recording);
         Err("当前平台不支持此原生采集后端".into())
     }
 }
@@ -233,6 +233,10 @@ pub fn remote_capture_active() -> bool {
 }
 #[cfg(windows)]
 #[path = "native_capture/windows.rs"]
+mod platform;
+
+#[cfg(target_os = "macos")]
+#[path = "native_capture/macos.rs"]
 mod platform;
 
 #[cfg(test)]

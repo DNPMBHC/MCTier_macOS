@@ -18,5 +18,8 @@
 - Android 新增非调试 `signedRelease` 构建，支持 v1/v2/v3 签名，沿用既有 APK 签名身份并校验指纹，保持旧用户覆盖升级兼容；独立检查 v1 签名和发布包的非调试属性。
 - Windows 打包支持为主程序、安装程序和卸载程序添加代码签名及时间戳，独立 EXE 导出前再次检查并按需补签；免费自签名不等于受信任证书，不保证消除 SmartScreen 警告。
 - 修复 Windows PowerShell 5.1 将 keytool 成功提示误判为 `NativeCommandError`、导致打包中止的问题，改为结合工具退出码和产物校验判断结果。
+- macOS 补齐与 Windows 同构的原生屏幕采集后端（CoreGraphics）：支持显示器与应用窗口共享、按 720p–2160p 档位缩放，帧包协议与 Windows 一致，屏幕共享、录屏与被控端视频在 macOS 上恢复可用；未授权屏幕录制时引导到系统设置并在授权重启后生效。
+- macOS 被控端输入注入改为要求本机屏幕正被共享（与 Windows 一致），防止在无采集会话时被静默操控。
+- macOS/Linux 支持打开日志文件夹与日志文件（Finder/xdg-open），不再提示“当前平台不支持此功能”。
 - 发布脚本支持仅构建 Windows 或 Android，以及失败后保留 Android versionCode 续跑；补充签名、音频连续性、公告恢复和界面尺寸变化的自动化回归测试。
 - 桌面端及 Android 端版本同步更新为 3.9.5，并更新项目文档、第三方声明版本及鸣谢名单。

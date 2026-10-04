@@ -1,6 +1,8 @@
-# Windows 原生屏幕采集与应用界面
+# Windows / macOS 原生屏幕采集与应用界面
 
 2026-09-30：Windows 屏幕共享和远程控制使用 Windows Graphics Capture（WGC）与 Direct3D 11，应用源代码不再调用 `navigator.mediaDevices.getDisplayMedia`。因此启动共享不会打开 WebView2 屏幕选择器，也不会产生其浏览器共享提示条。
+
+2026-10-04：macOS 补齐同构的原生采集后端（CoreGraphics），屏幕共享、录屏与被控端视频在 macOS 上与 Windows 走同一套命令与帧包协议；前端依旧没有浏览器选屏回退。
 
 ## 使用方式
 
@@ -21,6 +23,15 @@
 用户停止、离开大厅、取消选择、原生源关闭、IPC 出错、主窗口重载都会结束采集。主窗口失联后原生工作线程在 12 秒未收到帧请求时自动释放。迟到的初始化结果和旧选择器响应不会重新激活已结束的会话。原生采集停止后立即禁止远程输入，不等待前端轮询完成。
 
 采集命令验证受信任的应用来源及窗口身份，仅主窗口能够枚举、启动、读取帧和停止采集。WebView2 媒体权限请求直接拒绝；麦克风另由 Rust / WASAPI 按用户操作采集，不再触发浏览器授权。
+
+## macOS（CoreGraphics 后端）
+
+- 实现位于 `src-tauri/src/modules/native_capture/macos.rs`：显示器经 `CGGetActiveDisplayList` + `CGDisplayCreateImage`，应用窗口经 `CGWindowListCopyWindowInfo` + `CGWindowListCreateImage`，帧在复用的 RGBA 位图上下文中按 720p–2160p 档位缩放。帧包为 `[u32 LE 宽][u32 LE 高][RGBA8]`，与 Windows 完全一致，前端的解码、`MediaStreamTrackGenerator` 桥和 WebRTC 路径不区分平台。有单元测试固定「自顶向下」的行序，避免远端看到倒屏。
+- 窗口列表只列普通应用窗口：layer 0、在屏、非本进程、非透明、尺寸非空且有归属应用。未授权屏幕录制时系统不给其他应用的窗口标题，此时显示所属应用名。
+- 屏幕录制是 TCC 授权门控：未授权时这些 API 静默只返回没有窗口内容的画面，因此枚举前先 `CGPreflightScreenCaptureAccess` 预检，未授权则请求系统弹窗一次并返回错误，提示到「系统设置 › 隐私与安全性 › 屏幕录制」授权；授权后需重启应用才对本进程生效。
+- 与 Windows 的差异：帧内不含鼠标光标；共享的窗口被最小化时本次采集结束（报“共享目标已关闭或已不可见”），而非停在最后一帧。被控端输入注入与本机采集活跃状态绑定，规则与 Windows 相同。
+- 旧版 CoreGraphics 采集符号在 macOS 15 SDK 起标记为 obsoleted，但运行时仍可用（已在 macOS 26 上验证符号存在）。若将来被系统移除，迁移路径是在同一 `platform` 模块接口后换用 ScreenCaptureKit（macOS 13+）。
+- 实机验证需要给宿主终端授予屏幕录制权限后运行 `cargo test --lib native_capture -- --include-ignored`；未授权时这两个测试自行跳过，不会误弹系统对话框。
 
 ## 其它浏览器界面
 
