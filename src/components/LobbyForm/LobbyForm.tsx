@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Alert, Form, Input, Button, Space, Typography, Modal, Switch, App as AntdApp } from 'antd';
+import { Form, Input, Button, Space, Typography, Modal, Switch, App as AntdApp } from 'antd';
 import { PasswordInput } from '../PasswordInput/PasswordInput';
 import { invoke } from '@tauri-apps/api/core';
 import { readText } from '@tauri-apps/plugin-clipboard-manager';
@@ -25,8 +25,10 @@ import {
   type LobbySessionTicket,
 } from '../../services/lobby/LobbySessionCoordinator';
 import { prepareSignalingIdentity } from '../../services/signaling/signalingIdentity';
+import { waitForLobbyEntry } from '../../services/lobby/lobbyEntry';
 import { useTranslation } from 'react-i18next';
 import { tl, getLanguage } from '../../i18n';
+import { isMacOSPlatform } from '../../utils/platform';
 import { isSafeServerNode, isSafeSignalingServer } from '../../security/trustBoundary';
 import './LobbyForm.css';
 
@@ -752,6 +754,7 @@ export const LobbyForm: React.FC<LobbyFormProps> = ({ mode, onClose }) => {
 
   // 检测自动大厅配置，自动填充并提交
   const pendingAutoConfig = useRef<any>(null);
+  const automaticEntry = useRef(false);
   useEffect(() => {
     const autoConfig = (window as any).__autoLobbyConfig || pendingAutoConfig.current;
     // 自动进入使用与手动加入相同的路径
@@ -769,6 +772,7 @@ export const LobbyForm: React.FC<LobbyFormProps> = ({ mode, onClose }) => {
     });
     const timer = setTimeout(() => {
       pendingAutoConfig.current = null;
+      automaticEntry.current = true;
       form.submit();
     }, 300);
     return () => clearTimeout(timer);
@@ -910,7 +914,7 @@ export const LobbyForm: React.FC<LobbyFormProps> = ({ mode, onClose }) => {
 
   const submissionInFlight = useRef(false);
   const handleSubmit = async (values: LobbyFormValues, overrideNode?: string) => {
-    if (submissionInFlight.current) return;
+    if (submissionInFlight.current || forceStopping) return;
     submissionInFlight.current = true;
     // 记录本次实际尝试的节点选择，便于失败时提供「换节点重试」
     const failedNodeValue = overrideNode ?? values.serverNode;
@@ -1004,6 +1008,7 @@ export const LobbyForm: React.FC<LobbyFormProps> = ({ mode, onClose }) => {
       }
 
       const commandName = mode === 'create' ? 'create_lobby' : 'join_lobby';
+      setLobby(null);
       setAppState('connecting');
       sessionTicket = lobbySessionCoordinator.begin();
 
@@ -1022,6 +1027,18 @@ export const LobbyForm: React.FC<LobbyFormProps> = ({ mode, onClose }) => {
 
       console.log('准备调用后端命令:', commandName);
       console.log('连接参数已通过前端校验');
+
+      // macOS 上 easytier-core 必须以 root 运行才能创建 utun，后端随即会弹出系统管理员
+      // 授权窗口。在发起入厅前提示，避免用户把它当成无关弹窗直接点“取消”。
+      if (isMacOSPlatform) {
+        message.info(
+          tl(
+            '正在连接大厅... macOS 会弹出管理员授权窗口，请输入登录密码以创建虚拟网卡',
+            'Connecting... macOS will ask for administrator authorization to create the virtual adapter. Enter your login password.'
+          ),
+          8
+        );
+      }
 
       // 调用后端命令
       const lobby = await invoke<Lobby>(commandName, {
@@ -1089,8 +1106,10 @@ export const LobbyForm: React.FC<LobbyFormProps> = ({ mode, onClose }) => {
       console.log('✅ 大厅创建/加入成功，HTTP文件服务器将在添加共享时按需启动');
 
       // 更新状态
-      setLobby({ ...lobby, serverNode, signalingServer });
-      setAppState('in-lobby');
+      const registered = waitForLobbyEntry(useAppStore.subscribe, sessionTicket.signal);
+      setLobby({ ...lobby, serverNode, signalingServer, entryMode: automaticEntry.current ? 'auto' : mode });
+      await registered;
+      lobbySessionCoordinator.assertCurrent(sessionTicket);
 
       // 记录到"最近大厅"，便于下次快速重进
       try {
@@ -1113,18 +1132,7 @@ export const LobbyForm: React.FC<LobbyFormProps> = ({ mode, onClose }) => {
         console.warn('记录统计会话失败（忽略）:', e);
       }
 
-      // macOS 上 easytier-core 必须以 root 运行才能创建 utun，后端随即会弹出系统管理员
-      // 授权窗口。提前在提示里说明，避免用户把它当成无关弹窗直接点“取消”。
-      const isMacOS = /Mac|iPhone|iPad|iPod/.test(navigator.platform);
-      message.info(
-        isMacOS
-          ? tl(
-              '正在连接大厅... macOS 会弹出管理员授权窗口，请输入登录密码以创建虚拟网卡',
-              'Connecting... macOS will ask for administrator authorization to create the virtual adapter. Enter your login password.'
-            )
-          : tl('正在连接大厅...', 'Connecting to lobby...'),
-        isMacOS ? 8 : 3
-      );
+      message.success(tl('已连接大厅', 'Connected to lobby'));
 
       // 关闭表单
       onClose();
@@ -1136,6 +1144,14 @@ export const LobbyForm: React.FC<LobbyFormProps> = ({ mode, onClose }) => {
         return;
       }
       if (sessionTicket) lobbySessionCoordinator.cancel(sessionTicket);
+      // Normal rejections are already torn down by App. A bounded wait can also
+      // expire during a stalled transport; stop that attempt before enabling retry.
+      if (useAppStore.getState().lobby && useAppStore.getState().signalingStatus !== 'failed') {
+        const { webrtcClient } = await import('../../services');
+        await webrtcClient.cleanup().catch(() => undefined);
+        await invoke('leave_lobby').catch(() => invoke('force_stop_easytier').catch(() => undefined));
+      }
+      setLobby(null);
       console.error('操作失败:', error);
       console.error('错误详情:', JSON.stringify(error, null, 2));
       setAppState('error');
@@ -1345,6 +1361,7 @@ export const LobbyForm: React.FC<LobbyFormProps> = ({ mode, onClose }) => {
         }
       }
     } finally {
+      automaticEntry.current = false;
       submissionInFlight.current = false;
       const currentSession = lobbySessionCoordinator.current();
       if (
@@ -1370,8 +1387,15 @@ export const LobbyForm: React.FC<LobbyFormProps> = ({ mode, onClose }) => {
     if (forceStopping) return;
     setForceStopping(true);
     try {
+      lobbySessionCoordinator.cancel();
+      setLobby(null);
       message.info(tl('正在强制停止…', 'Force stopping...'));
-      await invoke('cancel_lobby_connecting');
+      try {
+        await invoke('cancel_lobby_connecting');
+      } finally {
+        const { webrtcClient } = await import('../../services');
+        await webrtcClient.cleanup();
+      }
     } catch (e) {
       console.warn('强制停止时出错（忽略）:', e);
     } finally {
@@ -1834,14 +1858,10 @@ export const LobbyForm: React.FC<LobbyFormProps> = ({ mode, onClose }) => {
             </Form.Item>
 
             {submitError && (
-              <Alert
-                type="error"
-                showIcon
-                role="alert"
-                message={mode === 'create' ? tl('创建大厅失败', 'Failed to create lobby') : tl('加入大厅失败', 'Failed to join lobby')}
-                description={submitError}
-                style={{ marginBottom: 16, overflowWrap: 'anywhere' }}
-              />
+              <div className="lobby-submit-error" role="alert">
+                <span className="lobby-submit-error-icon" aria-hidden="true"><WarningIcon size={16} /></span>
+                <span>{submitError}</span>
+              </div>
             )}
             <Form.Item className="lobby-form-actions">
               <Space size="middle" style={{ width: '100%' }}>
