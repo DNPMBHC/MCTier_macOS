@@ -3,6 +3,9 @@
 #[cfg(target_os = "windows")]
 use super::shared::*;
 
+#[cfg(not(target_os = "windows"))]
+use super::shared::unix_system_command;
+
 /// 打开日志文件所在的文件夹
 ///
 /// # 返回
@@ -43,7 +46,19 @@ pub async fn open_log_folder() -> Result<(), String> {
 
     #[cfg(not(target_os = "windows"))]
     {
-        Err("当前平台不支持此功能".to_string())
+        // macOS 用 open（Finder），Linux 用 xdg-open；路径由 app_paths 决定，不受输入控制。
+        use std::process::Command;
+        let opener = if cfg!(target_os = "macos") { "open" } else { "xdg-open" };
+        match Command::new(unix_system_command(opener)?).arg(&log_path).spawn() {
+            Ok(_) => {
+                log::info!("✅ 成功打开日志文件夹");
+                Ok(())
+            }
+            Err(e) => {
+                log::error!("❌ 打开日志文件夹失败: {}", e);
+                Err(format!("打开日志文件夹失败: {}", e))
+            }
+        }
     }
 }
 
@@ -88,7 +103,19 @@ pub async fn open_log_file() -> Result<(), String> {
 
     #[cfg(not(target_os = "windows"))]
     {
-        Err("当前平台不支持此功能".to_string())
+        // 交给系统默认文本处理器：macOS 是 open，Linux 是 xdg-open。
+        use std::process::Command;
+        let opener = if cfg!(target_os = "macos") { "open" } else { "xdg-open" };
+        match Command::new(unix_system_command(opener)?).arg(&log_path).spawn() {
+            Ok(_) => {
+                log::info!("✅ 成功打开日志文件");
+                Ok(())
+            }
+            Err(e) => {
+                log::error!("❌ 打开日志文件失败: {}", e);
+                Err(format!("打开日志文件失败: {}", e))
+            }
+        }
     }
 }
 
