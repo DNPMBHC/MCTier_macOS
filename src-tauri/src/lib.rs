@@ -1570,10 +1570,24 @@ pub fn run() {
                 }
             }
         })
-        .run(tauri::generate_context!());
-    if let Err(e) = result {
-        error!("运行错误: {}", e);
-        panic!("error: {}", e);
-    }
+        .build(tauri::generate_context!());
+    let app = match result {
+        Ok(app) => app,
+        Err(e) => {
+            error!("运行错误: {}", e);
+            panic!("error: {}", e);
+        }
+    };
+    app.run(|_app_handle, event| {
+        // macOS：窗口被隐藏或最小化到 Dock 之后，点 Dock 图标 / 重新打开应用
+        // 系统只会发 Reopen 事件。不处理的话主窗口就再也唤不回来，看起来像「卡死」。
+        #[cfg(target_os = "macos")]
+        if let tauri::RunEvent::Reopen { .. } = event {
+            info!("收到 macOS Reopen 事件，恢复主窗口");
+            restore_main_window(_app_handle);
+        }
+        #[cfg(not(target_os = "macos"))]
+        let _ = &event;
+    });
     info!("MCTier 应用程序已关闭");
 }

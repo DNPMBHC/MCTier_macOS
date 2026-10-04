@@ -40,7 +40,7 @@ import {
 } from './theme/themePreference';
 import { isSafeResourceId, sanitizeUntrustedText } from './security/trustBoundary';
 import { useWindowLayout } from './hooks';
-import { applyWindowLayout, currentWindowLayout } from './utils/windowLayout';
+import { applyWindowLayout, currentWindowLayout, isMacOSPlatform } from './utils/windowLayout';
 import './App.css';
 import { syncBuiltinEmojiItems } from './services/emoji/emojiLibrary';
 import { NativeCapturePicker } from './components/NativeCapture/NativeCapture';
@@ -191,10 +191,16 @@ function MainWindowApp() {
           showText: tl('显示 MCTier', 'Show MCTier'),
           exitText: tl('退出 MCTier', 'Exit MCTier'),
           notificationTitle: tl('MCTier 正在后台运行', 'MCTier is running in the background'),
-          notificationBody: tl(
-            'MCTier 已最小化到系统托盘。点击右下角托盘图标或按 {shortcut} 可恢复窗口。',
-            'MCTier has been minimized to the system tray. Click the tray icon or press {shortcut} to restore it.'
-          ),
+          // macOS 的托盘在菜单栏，窗口隐藏后 Dock 图标同样能唤回，文案按平台区分。
+          notificationBody: isMacOSPlatform
+            ? tl(
+                'MCTier 已隐藏到菜单栏。点击菜单栏图标、Dock 图标或按 {shortcut} 可恢复窗口。',
+                'MCTier is hidden in the menu bar. Click the menu bar icon, the Dock icon, or press {shortcut} to restore it.'
+              )
+            : tl(
+                'MCTier 已最小化到系统托盘。点击右下角托盘图标或按 {shortcut} 可恢复窗口。',
+                'MCTier has been minimized to the system tray. Click the tray icon or press {shortcut} to restore it.'
+              ),
         });
       } catch (error) {
         console.error('同步托盘菜单语言失败:', error);

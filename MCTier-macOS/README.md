@@ -14,9 +14,10 @@ This directory contains the macOS build and native-resource preparation scripts.
 - macOS networking requires EasyTier `easytier-core` and `easytier-cli` built as matching Mach-O executables.
 - Creating the `utun` adapter requires root, so `easytier-core` is launched through the system administrator authorization prompt (see below). The MCTier UI itself stays unprivileged.
 - The repository intentionally does not fall back to Linux ELF binaries and does not claim virtual-LAN support until those resources are verified.
-- The macOS main window uses native decorations and the standard left-side red/yellow/green traffic lights. The yellow button minimizes to the Dock and the green button zooms or enters native full screen; the main page uses a desktop-sized responsive layout instead of the compact 320px form.
+- The macOS main window uses native decorations and the standard left-side red/yellow/green traffic lights. It opens in the compact portrait layout (420×680) and switches to the desktop two-column layout once the window is dragged to 760px or wider; dragging back below that restores portrait. The breakpoint lives in `src/utils/windowLayout.ts` and is mirrored by `@media (min-width: 760px)` in the macOS CSS, so the JS form and the stylesheet always agree. The green button zooms or enters native full screen.
+- Hiding the window (the in-app minimize button, the summon hotkey, or the tray menu) keeps MCTier running in the menu bar. Clicking the menu bar icon, the Dock icon, or reopening the app all restore it — macOS reports the latter two as a `Reopen` event, which the Rust side handles explicitly. Without that handler the window could be hidden or minimized with no way to bring it back.
 - Secondary overlays (screen viewer, danmaku, and game HUD) retain their dedicated transparent/overlay behavior.
-- The traffic-light, Cmd+W/Cmd+Q, multi-monitor restore, Retina sizing, and full-screen behavior require on-device validation.
+- The traffic-light, Cmd+W/Cmd+Q, multi-monitor restore, Retina sizing, full-screen, and portrait/landscape layout switching behavior require on-device validation.
 
 ## Prepare EasyTier
 
