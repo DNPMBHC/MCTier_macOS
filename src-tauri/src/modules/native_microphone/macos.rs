@@ -566,14 +566,9 @@ pub fn run(
     run_source(device_id, system_processing, false, false, stop, requests, ready)
 }
 
-/// macOS has no per-application system-audio tap. Capturing what the machine plays
-/// needs ScreenCaptureKit (macOS 13+) or a virtual output device such as BlackHole,
-/// so the recording path says so instead of quietly recording the microphone.
-const ERR_NO_SYSTEM_AUDIO: &str =
-    "macOS 录制系统声音需要虚拟音频设备（如 BlackHole）；请先安装并在「音频 MIDI 设置」中把它设为输出，再在录制设置里选择对应输入";
-
-/// `loopback` records what the machine *plays*; it is rejected explicitly rather than
-/// silently falling back to recording the microphone.
+/// `loopback` records what the machine *plays*. macOS 13+ captures it natively
+/// through ScreenCaptureKit (see `super::system_audio`); older systems keep the
+/// BlackHole virtual-device guidance instead of quietly recording the microphone.
 pub fn run_recording(
     device_id: String,
     system_processing: bool,
@@ -583,9 +578,7 @@ pub fn run_recording(
     ready: tokio::sync::oneshot::Sender<Result<String, String>>,
 ) -> Result<(), String> {
     if loopback {
-        let message = ERR_NO_SYSTEM_AUDIO.to_string();
-        let _ = ready.send(Err(message.clone()));
-        return Err(message);
+        return super::system_audio::run(stop, requests, ready);
     }
     run_source(device_id, system_processing, false, true, stop, requests, ready)
 }
@@ -740,22 +733,8 @@ mod tests {
         assert!(error.starts_with("MIC_NOT_FOUND:"), "{error}");
     }
 
-    /// 前端会把 MIC_NOT_FOUND: 前缀换成 NotFoundError 再展示给用户，不能丢。
-    #[test]
-    fn recording_system_audio_is_rejected_before_capture() {
-        let (ready, started) = tokio::sync::oneshot::channel();
-        let result = run_recording(
-            String::new(),
-            false,
-            true,
-            Arc::new(AtomicBool::new(false)),
-            std::sync::mpsc::channel().1,
-            ready,
-        );
-        assert!(result.is_err());
-        assert!(result.unwrap_err().contains("BlackHole"));
-        assert!(started.blocking_recv().expect("ready").unwrap_err().contains("BlackHole"));
-    }
+    // 系统声音（loopback）在 macOS 13+ 走 ScreenCaptureKit，见
+    // super::system_audio：启动需要屏幕录制授权，只能实机验证，不适合单测。
 
     /// 枚举输入设备不需要麦克风授权，所以在没给权限的机器上也能跑。
     #[test]

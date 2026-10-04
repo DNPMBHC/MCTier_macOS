@@ -31,6 +31,7 @@
 - 屏幕录制是 TCC 授权门控：未授权时这些 API 静默只返回没有窗口内容的画面，因此枚举前先 `CGPreflightScreenCaptureAccess` 预检，未授权则请求系统弹窗一次并返回错误，提示到「系统设置 › 隐私与安全性 › 屏幕录制」授权；授权后需重启应用才对本进程生效。
 - 与 Windows 的差异：帧内不含鼠标光标；共享的窗口被最小化时本次采集结束（报“共享目标已关闭或已不可见”），而非停在最后一帧。被控端输入注入与本机采集活跃状态绑定，规则与 Windows 相同。
 - 旧版 CoreGraphics 采集符号在 macOS 15 SDK 起标记为 obsoleted，但运行时仍可用（已在 macOS 26 上验证符号存在）。若将来被系统移除，迁移路径是在同一 `platform` 模块接口后换用 ScreenCaptureKit（macOS 13+）。
+- 录屏的系统声音在 macOS 13+ 走 ScreenCaptureKit 音频流（`native_microphone/macos_system_audio.rs`，WASAPI loopback 的对应实现）：48 kHz 单声道 float32、排除本进程声音、原生端积压超过两秒自动停止，与 Windows 共用同一录制管线与包契约。需要屏幕录制授权（与视频同一授权）；macOS 12 及以下仍提示 BlackHole 虚拟设备方案。
 - 实机验证需要给宿主终端授予屏幕录制权限后运行 `cargo test --lib native_capture -- --include-ignored`；未授权时这两个测试自行跳过，不会误弹系统对话框。
 
 ## 其它浏览器界面

@@ -96,6 +96,16 @@ fn sessions() -> &'static Mutex<HashMap<String, Session>> {
     static SESSIONS: OnceLock<Mutex<HashMap<String, Session>>> = OnceLock::new();
     SESSIONS.get_or_init(Default::default)
 }
+/// 有活跃会话时申请 macOS 后台活动豁免：窗口隐藏后 App Nap 会节流进程，
+/// WebView 的取流泵一旦停摆，语音与录制就会出现断流。会话清零时释放。
+#[cfg(target_os = "macos")]
+fn update_background_activity() {
+    let active = !sessions()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .is_empty();
+    crate::modules::macos_platform::set_realtime_activity(active);
+}
 fn authorize(window: &WebviewWindow) -> Result<(), String> {
     let url = window.url().map_err(|e| e.to_string())?;
     if window.label() != "main" || !crate::modules::media_permission::trusted(url.as_str()) {
@@ -162,6 +172,8 @@ async fn start_source(device_id: String, system_processing: bool, loopback: bool
                 },
             );
         }
+        #[cfg(target_os = "macos")]
+        update_background_activity();
         let worker_id = id.clone();
         let spawn = std::thread::Builder::new()
             .name("native-microphone".into())
@@ -174,6 +186,8 @@ async fn start_source(device_id: String, system_processing: bool, loopback: bool
                     .lock()
                     .unwrap_or_else(|e| e.into_inner())
                     .remove(&worker_id);
+                #[cfg(target_os = "macos")]
+                update_background_activity();
             });
         if let Err(e) = spawn {
             stop_id(&id);
@@ -241,11 +255,15 @@ fn stop_id(id: &str) {
     {
         s.stop.store(true, Ordering::Release);
     }
+    #[cfg(target_os = "macos")]
+    update_background_activity();
 }
 pub fn stop_all() {
     for (_, s) in sessions().lock().unwrap_or_else(|e| e.into_inner()).drain() {
         s.stop.store(true, Ordering::Release);
     }
+    #[cfg(target_os = "macos")]
+    update_background_activity();
 }
 
 #[cfg(windows)]
@@ -255,3 +273,9 @@ mod platform;
 #[cfg(target_os = "macos")]
 #[path = "native_microphone/macos.rs"]
 mod platform;
+
+/// 系统声音采集（ScreenCaptureKit，macOS 13+）：对应 Windows 的 WASAPI loopback，
+/// 由 macOS 的 platform::run_recording 在 loopback 时调用。
+#[cfg(target_os = "macos")]
+#[path = "native_microphone/macos_system_audio.rs"]
+mod system_audio;

@@ -17,7 +17,7 @@ This directory contains the macOS build and native-resource preparation scripts.
 - The macOS main window uses native decorations and the standard left-side red/yellow/green traffic lights. It opens in the compact portrait layout (420×680) and switches to the desktop two-column layout once the window is dragged to 760px or wider; dragging back below that restores portrait. The breakpoint lives in `src/utils/windowLayout.ts` and is mirrored by `@media (min-width: 760px)` in the macOS CSS, so the JS form and the stylesheet always agree. The green button zooms or enters native full screen.
 - Hiding the window (the in-app minimize button, the summon hotkey, or the tray menu) keeps MCTier running in the menu bar. Clicking the menu bar icon, the Dock icon, or reopening the app all restore it — macOS reports the latter two as a `Reopen` event, which the Rust side handles explicitly. Without that handler the window could be hidden or minimized with no way to bring it back.
 - Secondary overlays (screen viewer, danmaku, and game HUD) retain their dedicated transparent/overlay behavior.
-- Microphone capture has a native CoreAudio path, matching the Windows WASAPI one (see below). Native screen capture has a CoreGraphics path (`src-tauri/src/modules/native_capture/macos.rs`) matching the Windows Graphics Capture one: display and window sources, requested-resolution scaling, and the same binary frame packets. macOS requires the user to grant Screen Recording permission first (see below).
+- Microphone capture has a native CoreAudio path, matching the Windows WASAPI one (see below). Native screen capture has a CoreGraphics path (`src-tauri/src/modules/native_capture/macos.rs`) matching the Windows Graphics Capture one: display and window sources, requested-resolution scaling, and the same binary frame packets. macOS requires the user to grant Screen Recording permission first (see below). Recording system audio has a ScreenCaptureKit path on macOS 13+ (see below); older systems need a virtual device such as BlackHole.
 - The traffic-light, Cmd+W/Cmd+Q, multi-monitor restore, Retina sizing, full-screen, portrait/landscape layout switching, microphone capture, and native screen capture behavior require on-device validation.
 
 ## Prepare EasyTier
@@ -101,11 +101,19 @@ native unit cannot be opened the frontend falls back to `getUserMedia` rather th
 losing the microphone entirely. Windows deliberately does not, because bypassing
 the WebView2 microphone chain is the reason the native path exists there.
 
-Recording what the machine **plays** is not supported. CoreAudio has no
-per-application system-audio tap, and capturing playback would need
-ScreenCaptureKit audio (macOS 13+) plus an Objective-C binding. The recording path
-reports that instead of quietly recording the microphone; installing a virtual
-output device such as BlackHole and selecting it as the input is the workaround.
+Recording what the machine **plays** is supported on macOS 13+ through
+ScreenCaptureKit (`src-tauri/src/modules/native_microphone/macos_system_audio.rs`),
+matching the Windows WASAPI loopback: 48 kHz mono float32 packets, the same
+batching and two-second backlog stop, and current-process audio excluded. It
+requires Screen Recording permission — the same grant the recorder's video path
+needs. On macOS 12 and older the path reports the BlackHole virtual-device
+workaround instead of capturing.
+
+While voice or capture sessions are active the app claims
+`NSActivityUserInitiatedAllowingIdleSystemSleep`, so hiding the window never
+lets App Nap throttle the WebView pumps; the activity is released when the last
+session ends. Hiding the window also posts a real notification through the
+system notification center (macOS wording mentions the menu bar icon).
 
 The native capture path itself has not been validated against live audio yet — only
 device enumeration runs unattended, since it needs no microphone authorization.

@@ -21,6 +21,8 @@
 - macOS 补齐与 Windows 同构的原生屏幕采集后端（CoreGraphics）：支持显示器与应用窗口共享、按 720p–2160p 档位缩放，帧包协议与 Windows 一致，屏幕共享、录屏与被控端视频在 macOS 上恢复可用；未授权屏幕录制时引导到系统设置并在授权重启后生效。
 - macOS 被控端输入注入改为要求本机屏幕正被共享（与 Windows 一致），防止在无采集会话时被静默操控。
 - macOS/Linux 支持打开日志文件夹与日志文件（Finder/xdg-open），不再提示“当前平台不支持此功能”。
-- macOS 录屏面板的“系统声音”开关改为禁用并说明原因（需虚拟音频设备），不再点了开始才报错。
+- macOS 录制系统声音改为 ScreenCaptureKit 原生采集（macOS 13+，需屏幕录制授权）：48 kHz 单声道、排除本进程声音、积压超两秒自动停止，与 Windows WASAPI loopback 同一套录制管线；旧系统仍提示使用 BlackHole 虚拟设备方案。
+- macOS 窗口隐藏到托盘后通过系统通知中心发送后台运行提示（此前仅记录日志），文案按菜单栏场景区分。
+- macOS 在语音或屏幕采集进行期间申请后台活动豁免（NSActivityUserInitiatedAllowingIdleSystemSleep），窗口隐藏后 App Nap 不再节流进程，避免语音与录制的取流泵断流；会话结束即释放。
 - 发布脚本支持仅构建 Windows 或 Android，以及失败后保留 Android versionCode 续跑；补充签名、音频连续性、公告恢复和界面尺寸变化的自动化回归测试。
 - 桌面端及 Android 端版本同步更新为 3.9.5，并更新项目文档、第三方声明版本及鸣谢名单。
