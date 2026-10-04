@@ -1,4 +1,5 @@
-//! macOS platform support for adapter detection and per-user auto-start.
+//! macOS platform support for adapter detection, per-user auto-start and
+//! background-activity (App Nap) control.
 
 use std::path::{Path, PathBuf};
 
@@ -111,6 +112,94 @@ pub fn auto_start_enabled() -> bool {
         .unwrap_or(false)
 }
 
+/// NSActivityUserInitiatedAllowingIdleSystemSleep：向系统声明「用户主动的事务仍在进行」。
+/// 它阻止 App Nap 对隐藏窗口进程做节流（隐藏后语音/采集的 WebView 取流泵还要实时跑），
+/// 同时保留显示器正常休眠——不带 IdleSystemSleepDisabled 才是这里的正确选项。
+const NS_ACTIVITY_USER_INITIATED_ALLOWING_IDLE_SYSTEM_SLEEP: u64 = (1 << 21) | (1 << 22);
+
+type Obj = *mut std::ffi::c_void;
+type Sel = *const std::ffi::c_void;
+
+extern "C" {
+    fn objc_getClass(name: *const std::ffi::c_char) -> Obj;
+    fn sel_registerName(name: *const std::ffi::c_char) -> Sel;
+    // arm64 上所有普通参数共用同一个 objc_msgSend 实现；按调用形状各声明一次即可，
+    // 这是调用 ObjC 的标准写法，签名必然互不相同，关掉重复声明检查。
+    #[allow(clashing_extern_declarations)]
+    #[link_name = "objc_msgSend"]
+    fn msg_send_object(receiver: Obj, sel: Sel) -> Obj;
+    #[allow(clashing_extern_declarations)]
+    #[link_name = "objc_msgSend"]
+    fn msg_send_begin_activity(receiver: Obj, sel: Sel, options: u64, reason: *const std::ffi::c_void) -> u64;
+    #[allow(clashing_extern_declarations)]
+    #[link_name = "objc_msgSend"]
+    fn msg_send_end_activity(receiver: Obj, sel: Sel, token: u64) -> Obj;
+}
+
+static REALTIME_ACTIVITY_ACTIVE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static REALTIME_ACTIVITY_TOKEN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+fn process_info() -> Obj {
+    unsafe {
+        let class = objc_getClass(c"NSProcessInfo".as_ptr());
+        msg_send_object(class, sel_registerName(c"processInfo".as_ptr()))
+    }
+}
+
+fn begin_realtime_activity() -> u64 {
+    // reason 需要一个 NSString；CFString 与 NSString 桥接（toll-free bridged）。
+    // 进程存活期间豁免状态可能反复切换，reason 常驻一次即可。
+    static REASON: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    let reason = *REASON.get_or_init(|| {
+        use core_foundation::base::TCFType;
+        use core_foundation::string::CFString;
+        let string = CFString::new("MCTier 语音通话或屏幕采集进行中");
+        let raw = string.as_concrete_TypeRef() as usize;
+        // mem::forget 保留 +1 引用：字符串对象与进程同寿命，指针永远有效。
+        std::mem::forget(string);
+        raw
+    }) as *const std::ffi::c_void;
+    unsafe {
+        msg_send_begin_activity(
+            process_info(),
+            sel_registerName(c"beginActivityWithOptions:reason:".as_ptr()),
+            NS_ACTIVITY_USER_INITIATED_ALLOWING_IDLE_SYSTEM_SLEEP,
+            reason,
+        )
+    }
+}
+
+fn end_realtime_activity(token: u64) {
+    unsafe {
+        msg_send_end_activity(
+            process_info(),
+            sel_registerName(c"endActivity:".as_ptr()),
+            token,
+        );
+    }
+}
+
+/// 有实时会话（原生麦克风/屏幕采集）时阻止 App Nap 节流；全部结束后释放。
+/// 幂等且可从任意线程调用；token 配对由 active 边沿驱动，避免泄漏重复的 activity。
+pub fn set_realtime_activity(active: bool) {
+    use std::sync::atomic::Ordering;
+    let was = REALTIME_ACTIVITY_ACTIVE.swap(active, Ordering::AcqRel);
+    if was == active {
+        return;
+    }
+    if active {
+        let token = begin_realtime_activity();
+        REALTIME_ACTIVITY_TOKEN.store(token, Ordering::Release);
+        log::debug!("已申请 macOS 后台活动豁免（token={token}）");
+    } else {
+        let token = REALTIME_ACTIVITY_TOKEN.swap(0, Ordering::AcqRel);
+        if token != 0 {
+            end_realtime_activity(token);
+            log::debug!("已释放 macOS 后台活动豁免（token={token}）");
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -120,6 +209,24 @@ mod tests {
         let plist = launch_agent_plist(Path::new("/tmp/MCTier<&\".app/Contents/MacOS/MCTier"));
         assert!(plist.contains("/tmp/MCTier&lt;&amp;&quot;.app/Contents/MacOS/MCTier"));
         assert!(plist.contains("<key>RunAtLoad</key>"));
+    }
+
+    /// 数值按 NSProcessInfo.h 抄写：(1 << 21) | (1 << 22)。
+    #[test]
+    fn activity_option_matches_the_sdk_header() {
+        assert_eq!(NS_ACTIVITY_USER_INITIATED_ALLOWING_IDLE_SYSTEM_SLEEP, 0x0060_0000);
+    }
+
+    /// begin/end 由 active 边沿驱动：重复 true/false 不应重复申请或泄漏 token。
+    /// beginActivity 无需系统授权，可以直接跑。
+    #[test]
+    fn realtime_activity_toggles_are_edge_driven() {
+        set_realtime_activity(true);
+        set_realtime_activity(true);
+        set_realtime_activity(false);
+        set_realtime_activity(false);
+        assert!(!REALTIME_ACTIVITY_ACTIVE.load(std::sync::atomic::Ordering::Acquire));
+        assert_eq!(REALTIME_ACTIVITY_TOKEN.load(std::sync::atomic::Ordering::Acquire), 0);
     }
 
     #[test]

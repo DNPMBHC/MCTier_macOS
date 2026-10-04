@@ -340,10 +340,26 @@ fn show_tray_background_notification(app: &tauri::AppHandle, generation: u64) {
     };
     let notification_body = body;
 
-    // 托盘气泡通知走的是 Windows 的 Shell_NotifyIcon，没有跨平台对应物。
-    // 这里不自造一套桌面通知（各桌面环境行为不一，且要引新依赖），只记一条日志，
-    // 同时显式消费上面算好的文案 —— 否则 Linux 目标下这两个变量是 unused 告警。
-    #[cfg(not(target_os = "windows"))]
+    // 托盘气泡通知走的是 Windows 的 Shell_NotifyIcon。macOS 用系统通知中心
+    // （osascript display notification）实现同等提示；其余桌面环境行为不一，
+    // 不自造一套桌面通知，只记一条日志，同时显式消费上面算好的文案。
+    #[cfg(target_os = "macos")]
+    {
+        let escape = |text: &str| {
+            text.replace('\\', "\\\\").replace('"', "\\\"")
+        };
+        let script = format!(
+            "display notification \"{}\" with title \"{}\"",
+            escape(&notification_body),
+            escape(&title)
+        );
+        match std::process::Command::new("/usr/bin/osascript").arg("-e").arg(&script).spawn() {
+            Ok(_) => info!("已发送 macOS 后台运行通知"),
+            Err(error) => log::warn!("发送 macOS 后台运行通知失败: {error}"),
+        }
+    }
+
+    #[cfg(all(not(target_os = "windows"), not(target_os = "macos")))]
     {
         log::info!(
             "托盘后台运行提示（当前平台无气泡通知）: {} - {}",

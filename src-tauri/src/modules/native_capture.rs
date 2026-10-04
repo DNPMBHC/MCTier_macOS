@@ -39,6 +39,16 @@ fn sessions() -> &'static Mutex<HashMap<String, Session>> {
     static VALUE: OnceLock<Mutex<HashMap<String, Session>>> = OnceLock::new();
     VALUE.get_or_init(|| Mutex::new(HashMap::new()))
 }
+/// 有活跃会话时申请 macOS 后台活动豁免：窗口隐藏后 App Nap 会节流进程，
+/// WebView 的取帧泵一旦停摆，观看端就会卡在最后一帧。会话清零时释放。
+#[cfg(target_os = "macos")]
+fn update_background_activity() {
+    let active = !sessions()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .is_empty();
+    crate::modules::macos_platform::set_realtime_activity(active);
+}
 fn authorize(window: &WebviewWindow) -> Result<(), String> {
     if window.label() != "main" {
         return Err("此窗口不能操作屏幕采集".into());
@@ -139,6 +149,8 @@ pub async fn native_capture_start(
                 },
             );
         }
+        #[cfg(target_os = "macos")]
+        update_background_activity();
         let worker_info = info.clone();
         let spawn = std::thread::Builder::new()
             .name("native-screen-capture".into())
@@ -158,12 +170,16 @@ pub async fn native_capture_start(
                     .lock()
                     .unwrap_or_else(|e| e.into_inner())
                     .remove(&worker_info.id);
+                #[cfg(target_os = "macos")]
+                update_background_activity();
             });
         if let Err(error) = spawn {
             sessions()
                 .lock()
                 .unwrap_or_else(|e| e.into_inner())
                 .remove(&info.id);
+            #[cfg(target_os = "macos")]
+            update_background_activity();
             return Err(error.to_string());
         }
         match tokio::time::timeout(Duration::from_secs(12), ready_rx).await {
@@ -218,11 +234,15 @@ fn stop_id(id: &str) {
     {
         session.stop.store(true, Ordering::Release);
     }
+    #[cfg(target_os = "macos")]
+    update_background_activity();
 }
 pub fn stop_all() {
     for (_, session) in sessions().lock().unwrap_or_else(|e| e.into_inner()).drain() {
         session.stop.store(true, Ordering::Release);
     }
+    #[cfg(target_os = "macos")]
+    update_background_activity();
 }
 pub fn remote_capture_active() -> bool {
     sessions()
