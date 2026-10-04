@@ -17,7 +17,7 @@ import { useEscapeKey, useWindowLayout } from '../../hooks';
 import { useTranslation } from 'react-i18next';
 import { tl } from '../../i18n';
 import { DOWNLOAD_WEBSITE } from '../../services/version/versionPolicy';
-import { isMacOSPlatform } from '../../utils/windowLayout';
+import { isMacOSPlatform } from '../../utils/platform';
 import './MainWindow.css';
 
 const { Title, Paragraph } = Typography;

@@ -40,7 +40,8 @@ import {
 } from './theme/themePreference';
 import { isSafeResourceId, sanitizeUntrustedText } from './security/trustBoundary';
 import { useWindowLayout } from './hooks';
-import { applyWindowLayout, currentWindowLayout, isMacOSPlatform } from './utils/windowLayout';
+import { applyWindowLayout, currentWindowLayout } from './utils/windowLayout';
+import { isMacOSPlatform } from './utils/platform';
 import './App.css';
 import { syncBuiltinEmojiItems } from './services/emoji/emojiLibrary';
 import { NativeCapturePicker } from './components/NativeCapture/NativeCapture';
@@ -54,7 +55,6 @@ import './components/ComplianceGate/ComplianceGate.css';
 // data-platform 由这里判定，data-layout 先按当前窗口宽度落一个初值，
 // 之后由 useWindowLayout 跟随窗口缩放实时更新。
 if (typeof document !== 'undefined' && typeof navigator !== 'undefined') {
-  const isMacOSPlatform = /Mac|iPhone|iPad|iPod/.test(navigator.platform);
   document.documentElement.dataset.platform = isMacOSPlatform ? 'macos' : 'other';
   applyWindowLayout(currentWindowLayout());
 }

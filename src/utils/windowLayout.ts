@@ -6,10 +6,10 @@
  * 这里集中提供断点、窗口尺寸和形态判定，保证 JS 与 CSS 使用同一套口径——
  * CSS 侧读取 <html data-layout>，由 applyWindowLayout 写入。
  */
+import { isMacOSPlatform } from './platform';
 
 /** 形态断点：窗口宽度 ≥ 该值使用横排，否则使用竖屏。 */
 export const LAYOUT_BREAKPOINT = 760;
-
 /** 竖屏（默认形态）展开尺寸 */
 const PORTRAIT_EXPANDED = { width: 420, height: 680 };
 /** 横排展开尺寸 */
@@ -21,8 +21,6 @@ const COMPACT_COLLAPSED = { width: 320, height: 50 };
 const MACOS_COLLAPSED = { width: 420, height: 50 };
 
 export type WindowLayout = 'portrait' | 'landscape';
-
-export const isMacOSPlatform = /Mac|iPhone|iPad|iPod/.test(navigator.platform);
 
 export function resolveWindowLayout(width: number): WindowLayout {
   return width >= LAYOUT_BREAKPOINT ? 'landscape' : 'portrait';
