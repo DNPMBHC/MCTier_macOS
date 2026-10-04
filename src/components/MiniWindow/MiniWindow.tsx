@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { invoke } from '@tauri-apps/api/core';
 import { Modal, Spin, Tooltip, App as AntdApp } from 'antd';
@@ -50,11 +50,9 @@ import {
   formatLobbyInviteText,
   type LobbyInvite,
 } from '../../services/lobby/lobbyInvite';
+import { useWindowLayout } from '../../hooks';
+import { collapsedWindowSize, expandedWindowSize } from '../../utils/windowLayout';
 import './MiniWindow.css';
-
-const isMacOS = /Mac|iPhone|iPad|iPod/.test(navigator.platform);
-const MINI_EXPANDED_SIZE = isMacOS ? { width: 980, height: 680 } : { width: 320, height: 520 };
-const MINI_COLLAPSED_SIZE = { width: isMacOS ? 420 : 320, height: 50 };
 
 /**
  * 迷你窗口组件
@@ -274,6 +272,14 @@ export const MiniWindow: React.FC = () => {
   const { message, modal } = AntdApp.useApp();
 
   const [collapsed, setCollapsed] = useState(false);
+  // 竖屏（默认）/ 横排跟随窗口宽度自动切换
+  const layout = useWindowLayout();
+  // 收起后窗口只剩标题栏、宽度也变窄，此时读到的形态不是用户选定的形态。
+  // 记住收起前的形态，展开时按它还原窗口尺寸，避免横排窗口展开后缩成竖屏。
+  const expandedLayoutRef = useRef(layout);
+  useEffect(() => {
+    if (!collapsed) expandedLayoutRef.current = layout;
+  }, [layout, collapsed]);
   const [opacity, setOpacity] = useState(config.opacity ?? 0.95);
   const [isLeaving, setIsLeaving] = useState(false);
   const [showConnectionHelp, setShowConnectionHelp] = useState(false);
@@ -979,7 +985,7 @@ export const MiniWindow: React.FC = () => {
         const { getCurrentWindow } = await import('@tauri-apps/api/window');
         const { LogicalSize } = await import('@tauri-apps/api/dpi');
         const appWindow = getCurrentWindow();
-        await appWindow.setSize(new LogicalSize(MINI_EXPANDED_SIZE.width, MINI_EXPANDED_SIZE.height));
+        await appWindow.setSize(new LogicalSize(expandedWindowSize(expandedLayoutRef.current)));
         console.log('窗口大小已恢复');
       }
 
@@ -1077,12 +1083,12 @@ export const MiniWindow: React.FC = () => {
       if (!collapsed) {
         // 收起：缩小窗口到只显示标题栏
         console.log('正在收起窗口...');
-        await appWindow.setSize(new LogicalSize(MINI_COLLAPSED_SIZE.width, MINI_COLLAPSED_SIZE.height));
+        await appWindow.setSize(new LogicalSize(collapsedWindowSize()));
         console.log('窗口已收起');
       } else {
         // 展开：恢复窗口大小
         console.log('正在展开窗口...');
-        await appWindow.setSize(new LogicalSize(MINI_EXPANDED_SIZE.width, MINI_EXPANDED_SIZE.height));
+        await appWindow.setSize(new LogicalSize(expandedWindowSize(expandedLayoutRef.current)));
         console.log('窗口已展开');
       }
 
@@ -1100,7 +1106,7 @@ export const MiniWindow: React.FC = () => {
       const { getCurrentWindow } = await import('@tauri-apps/api/window');
       const { LogicalSize } = await import('@tauri-apps/api/dpi');
       const appWindow = getCurrentWindow();
-      await appWindow.setSize(new LogicalSize(MINI_EXPANDED_SIZE.width, MINI_EXPANDED_SIZE.height));
+      await appWindow.setSize(new LogicalSize(expandedWindowSize(expandedLayoutRef.current)));
       setCollapsed(false);
       await new Promise((resolve) => window.setTimeout(resolve, 320));
     } catch (error) {
@@ -1293,7 +1299,7 @@ export const MiniWindow: React.FC = () => {
         const { getCurrentWindow } = await import('@tauri-apps/api/window');
         const { LogicalSize } = await import('@tauri-apps/api/dpi');
         const appWindow = getCurrentWindow();
-        await appWindow.setSize(new LogicalSize(MINI_COLLAPSED_SIZE.width, MINI_COLLAPSED_SIZE.height));
+        await appWindow.setSize(new LogicalSize(collapsedWindowSize()));
         setCollapsed(true);
         console.log('✅ 聊天室关闭，窗口已自动收起');
       } catch (error) {
@@ -1316,7 +1322,7 @@ export const MiniWindow: React.FC = () => {
         const { getCurrentWindow } = await import('@tauri-apps/api/window');
         const { LogicalSize } = await import('@tauri-apps/api/dpi');
         const appWindow = getCurrentWindow();
-        await appWindow.setSize(new LogicalSize(MINI_EXPANDED_SIZE.width, MINI_EXPANDED_SIZE.height));
+        await appWindow.setSize(new LogicalSize(expandedWindowSize(expandedLayoutRef.current)));
         setCollapsed(false);
         console.log('窗口已展开');
       }
@@ -1908,19 +1914,13 @@ export const MiniWindow: React.FC = () => {
                           collapsed,
                           lobby: lobby?.name,
                         });
-                        if (isMacOS) {
-                          const { getCurrentWindow } = await import('@tauri-apps/api/window');
-                          await getCurrentWindow().minimize();
-                          console.log('✅ macOS 窗口已最小化到 Dock');
-                        } else {
-                          await invoke('minimize_main_window_to_tray');
-                          console.log('✅ 已最小化到系统托盘');
-                        }
+                        await invoke('minimize_main_window_to_tray');
+                        console.log('✅ 已最小化到系统托盘');
                       } catch (error) {
                         console.error('最小化到系统托盘失败:', error);
                       }
                     }}
-                    title={isMacOS ? tl('最小化到 Dock', 'Minimize to Dock') : tl('最小化到系统托盘', 'Minimize to tray')}
+                    title={tl('最小化到系统托盘', 'Minimize to tray')}
                     whileHover={{ scale: 1.1 }}
                     whileTap={{ scale: 0.95 }}
                   >

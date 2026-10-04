@@ -30,6 +30,12 @@
   }
 }
 
+/* macOS 原生交通灯固定在窗口左上角（trafficLightPosition 16,14），标题默认的
+   left:14px 会被压在按钮下面。放在媒体查询之后，竖屏 / 横排共用同一套让位。 */
+:root[data-platform='macos'] .mini-window-header {
+  padding-left: 92px;
+}
+
 .mini-window {
   width: 100%;
   height: 100%;

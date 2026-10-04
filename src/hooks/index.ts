@@ -3,3 +3,4 @@
  */
 
 export { useEscapeKey } from './useEscapeKey';
+export { useWindowLayout } from './useWindowLayout';

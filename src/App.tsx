@@ -39,6 +39,8 @@ import {
   type ThemePreference,
 } from './theme/themePreference';
 import { isSafeResourceId, sanitizeUntrustedText } from './security/trustBoundary';
+import { useWindowLayout } from './hooks';
+import { applyWindowLayout, currentWindowLayout } from './utils/windowLayout';
 import './App.css';
 import { syncBuiltinEmojiItems } from './services/emoji/emojiLibrary';
 import { NativeCapturePicker } from './components/NativeCapture/NativeCapture';
@@ -48,14 +50,17 @@ import { QuarkStartupPrompt } from './components/QuarkSupport/QuarkStartupPrompt
 import { DesktopComplianceGate } from './components/ComplianceGate/ComplianceGate';
 import './components/ComplianceGate/ComplianceGate.css';
 
-// 与 MainWindow/MiniWindow 的模块级 isMacOS 判定保持同一时序：模块加载时同步写入
-// data-platform，避免首帧缺少 macOS 安全区/内边距导致的布局跳动。
+// 模块加载时同步写入形态标记，避免首帧缺少 macOS 安全区/内边距导致的布局跳动：
+// data-platform 由这里判定，data-layout 先按当前窗口宽度落一个初值，
+// 之后由 useWindowLayout 跟随窗口缩放实时更新。
 if (typeof document !== 'undefined' && typeof navigator !== 'undefined') {
   const isMacOSPlatform = /Mac|iPhone|iPad|iPod/.test(navigator.platform);
   document.documentElement.dataset.platform = isMacOSPlatform ? 'macos' : 'other';
+  applyWindowLayout(currentWindowLayout());
 }
 
 function App() {
+  useWindowLayout();
   const search = window.location.search;
   if (search.includes('danmaku=true')) return <DanmakuOverlay />;
   if (search.includes('gamehud=true')) return <GameHudOverlay />;

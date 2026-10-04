@@ -17,9 +17,44 @@
 }
 
 /* macOS 的交通灯固定在左上角（trafficLightPosition 16,14），Quark 入口按默认的
-   left:14px 会压在上面，这里右移让开三个按钮的宽度。 */
-.main-window.macos-desktop-window .quark-entry {
+   left:14px 会压在上面，这里右移让开三个按钮的宽度。竖屏 / 横排都要让。 */
+:root[data-platform='macos'] .quark-entry {
   left: 92px;
+}
+
+/* macOS 竖屏（默认形态）：沿用紧凑竖窗布局，只补上原生交通灯需要的安全区。
+   与横排一样顶对齐 + 可滚动，窗口压到最小高度时底部按钮不会被 overflow 裁掉。
+   拖拽区必须能接收指针事件——macOS 下 WKWebView 不认 -webkit-app-region。 */
+:root[data-platform='macos'] .main-window:not(.macos-desktop-window) {
+  height: 100%;
+  min-height: 100%;
+  padding: 64px 24px 40px;
+  justify-content: flex-start;
+  overflow: auto;
+}
+
+:root[data-platform='macos'] .main-window:not(.macos-desktop-window) .main-window-drag-area {
+  height: 52px;
+  pointer-events: auto;
+  -webkit-app-region: drag;
+  app-region: drag;
+}
+
+:root[data-platform='macos'] .main-window:not(.macos-desktop-window) .main-window-content {
+  width: min(100%, 420px);
+  max-width: 420px;
+}
+
+:root[data-platform='macos'] .main-window:not(.macos-desktop-window) button,
+:root[data-platform='macos'] .main-window:not(.macos-desktop-window) input,
+:root[data-platform='macos'] .main-window:not(.macos-desktop-window) select,
+:root[data-platform='macos'] .main-window:not(.macos-desktop-window) textarea,
+:root[data-platform='macos'] .main-window:not(.macos-desktop-window) a,
+:root[data-platform='macos'] .main-window:not(.macos-desktop-window) .ant-select,
+:root[data-platform='macos'] .main-window:not(.macos-desktop-window) .ant-input,
+:root[data-platform='macos'] .main-window:not(.macos-desktop-window) .ant-form-item {
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
 }
 
 .main-window.macos-desktop-window .main-window-content {

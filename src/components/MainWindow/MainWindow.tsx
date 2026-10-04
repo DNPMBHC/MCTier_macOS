@@ -13,13 +13,12 @@ import { OPEN_QUARK_SUPPORT } from '../QuarkSupport/QuarkStartupPrompt';
 import { SettingsWindow } from '../SettingsWindow';
 import { OnboardingWizard, isOnboardingDone } from '../OnboardingWizard/OnboardingWizard';
 import { CloseIcon } from '../icons';
-import { useEscapeKey } from '../../hooks';
+import { useEscapeKey, useWindowLayout } from '../../hooks';
 import { useTranslation } from 'react-i18next';
 import { tl } from '../../i18n';
 import { DOWNLOAD_WEBSITE } from '../../services/version/versionPolicy';
+import { isMacOSPlatform } from '../../utils/windowLayout';
 import './MainWindow.css';
-
-const isMacOS = /Mac|iPhone|iPad|iPod/.test(navigator.platform);
 
 const { Title, Paragraph } = Typography;
 
@@ -29,6 +28,9 @@ const { Title, Paragraph } = Typography;
  */
 export const MainWindow: React.FC<{ startupReady?: boolean }> = ({ startupReady = true }) => {
   const { t } = useTranslation();
+  // 竖屏（默认）/ 横排跟随窗口宽度自动切换，横排时套用桌面双栏布局
+  const layout = useWindowLayout();
+  const desktopLayout = isMacOSPlatform && layout === 'landscape';
   const [showForm, setShowForm] = useState(false);
   const [formMode, setFormMode] = useState<'create' | 'join'>('create');
   const [showAbout, setShowAbout] = useState(false);
@@ -240,11 +242,11 @@ export const MainWindow: React.FC<{ startupReady?: boolean }> = ({ startupReady 
   }
 
   return (
-    <div className={`main-window ${isMacOS ? 'macos-desktop-window' : ''} ${!enableGpuRendering ? 'gpu-rendering-disabled' : ''}`}>
+    <div className={`main-window ${desktopLayout ? 'macos-desktop-window' : ''} ${!enableGpuRendering ? 'gpu-rendering-disabled' : ''}`}>
       {/* 拖拽区域 - macOS 原生标题栏已包含交通灯；其他平台保留自绘控制区 */}
       <div className="main-window-drag-area" data-tauri-drag-region>
         <QuarkSupportEntry onClick={() => window.dispatchEvent(new Event(OPEN_QUARK_SUPPORT))} />
-        {!isMacOS && <div className="main-window-controls">
+        {!isMacOSPlatform && <div className="main-window-controls">
           <button className="main-window-control-btn" onClick={handleMinimizeToTray} title={tl('最小化到系统托盘', 'Minimize to system tray')}>
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true">
               <path d="M5 12h14" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" />
