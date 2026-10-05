@@ -8,15 +8,26 @@
 #
 # 注意:故意不用 `cargo clean`——它会把 src-tauri/target/sherpa-onnx-prebuilt 里
 # 下载好的预编译库一起删掉,而 macOS 没有现成的脚本可以重新下载它。
+#
+# 清理前会检查有没有构建/检查进程(cargo/rustc/tauri)或 MCTier 正在跑,有则拒绝执行,
+# 避免删掉正在使用的构建目录。确认无影响时可用 CLEAN_CACHE_SKIP_GUARD=1 跳过检查。
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TARGET="$ROOT/src-tauri/target"
 MODE="${1:-safe}"
 
-# 构建进程边删边往 target 里写文件会让 rm -rf 报 "Directory not empty",先拦下来
-if pgrep -f "tauri (dev|build)|cargo build" >/dev/null 2>&1; then
-  echo "检测到正在运行的构建进程(tauri/cargo),请先停止它再清理。"
+# 编译器会边删边往 target 里写文件(rm -rf 报 "Directory not empty" 并破坏增量缓存),
+# cargo build/clippy/check 也都吃 target/debug;正在运行的 app 则可能正用着 debug 构建目录。
+GUARD_HINT="确认无影响时可设 CLEAN_CACHE_SKIP_GUARD=1 跳过本检查。"
+if [ -z "${CLEAN_CACHE_SKIP_GUARD:-}" ] && pgrep -f "cargo (build|clippy|check|test|run)|rustc|tauri (dev|build)" >/dev/null 2>&1; then
+  echo "检测到正在运行的 Rust 构建/检查进程(cargo/rustc/tauri),请等它结束再清理。"
+  echo "$GUARD_HINT"
+  exit 1
+fi
+if [ -z "${CLEAN_CACHE_SKIP_GUARD:-}" ] && pgrep -x mctier >/dev/null 2>&1; then
+  echo "检测到正在运行的 MCTier 应用,请先退出(它可能正在使用 debug 构建目录)。"
+  echo "$GUARD_HINT"
   exit 1
 fi
 
