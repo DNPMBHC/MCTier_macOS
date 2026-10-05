@@ -584,6 +584,21 @@ pub fn open_microphone_privacy_settings() -> Result<(), String> {
     Ok(())
 }
 
+/// 打开 macOS 辅助功能隐私设置：被远程控制需要 MCTier 出现在辅助功能授权
+/// 列表里，该权限无法由应用发起系统弹窗，只能引导用户到对应设置页手动添加。
+#[tauri::command]
+pub fn open_accessibility_privacy_settings() -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        crate::modules::macos_platform::open_privacy_settings("accessibility")
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        Err("该功能仅 macOS 需要".to_string())
+    }
+}
+
 /// Restart into the permission-reset startup path. The new process waits for this
 /// WebView to exit before deleting EBWebView, avoiding locked-file failures.
 #[tauri::command]

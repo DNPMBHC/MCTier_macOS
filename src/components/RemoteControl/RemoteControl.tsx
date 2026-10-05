@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { App as AntdApp } from 'antd';
+import { invoke } from '@tauri-apps/api/core';
 import { useTranslation } from 'react-i18next';
 import { tl } from '../../i18n';
 import { remoteControlService } from '../../services/remoteControl/RemoteControlService';
@@ -124,8 +125,31 @@ export const RemoteControl: React.FC = () => {
         onOk: async () => {
           try {
             await remoteControlService.acceptControl(sessionId, from, fromName);
-          } catch {
-            message.error(tl('屏幕采集被取消或失败', 'Screen capture was cancelled or failed'));
+          } catch (error) {
+            // 权限缺失（如 macOS 辅助功能未授权）有明确的引导文案，必须透传
+            // 给用户，不能全部吞成同一句"采集失败"。
+            const detail = error instanceof Error && error.message ? error.message : String(error);
+            const isAccessibility = detail.includes('辅助功能');
+            const messageText = isAccessibility
+              ? detail
+              : tl('屏幕采集被取消或失败', 'Screen capture was cancelled or failed');
+            if (isAccessibility) {
+              modal.confirm({
+                title: tl('需要辅助功能授权', 'Accessibility permission required'),
+                content: detail,
+                okText: tl('打开系统设置', 'Open System Settings'),
+                cancelText: tl('取消', 'Cancel'),
+                onOk: async () => {
+                  try {
+                    await invoke('open_accessibility_privacy_settings');
+                  } catch (settingsError) {
+                    message.error(String(settingsError));
+                  }
+                },
+              });
+            } else {
+              message.error(messageText);
+            }
             if (remoteControlService.isSessionForPeer(sessionId, from)) remoteControlService.stopControl();
           }
         },

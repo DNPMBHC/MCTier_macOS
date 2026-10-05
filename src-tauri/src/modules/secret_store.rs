@@ -104,6 +104,13 @@ pub fn protect_lobby_password(password: String) -> Result<String, String> {
     if password.is_empty() {
         return Ok(password);
     }
+    // 已经是本地信封：原样返回。回填最近大厅/收藏时传来的都是信封，重复
+    // resolve+re-seal 每次都要读系统凭据库（macOS 上重签名的开发包还会触发
+    // 钥匙串授权弹窗），一旦失败就把整条回填流程打断，表现为"每次都要重新
+    // 输入密码"。信封在首次创建时已经过了明文策略校验，直接复用是等价的。
+    if password.starts_with(LOCAL_PREFIX) {
+        return Ok(password);
+    }
     let plain = resolve(&password)?;
     crate::modules::lobby_manager::LobbyManager::validate_password(&plain)
         .map_err(|e| e.to_string())?;

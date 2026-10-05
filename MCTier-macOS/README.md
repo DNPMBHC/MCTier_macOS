@@ -238,3 +238,5 @@ directory blocked forever on `open()`. Two changes close this off:
 ## Distribution
 
 Unsigned and unnotarized packages are for local testing. A public release needs an Apple Developer ID application certificate, hardened runtime/entitlements as required by the selected native features, and Apple notarization. macOS users may also need to grant Microphone, Screen Recording, and Accessibility permissions in System Settings.
+
+Permission plumbing per feature: the bundled `Info.plist` (merged by tauri-build) carries `NSMicrophoneUsageDescription`, without which neither the native CoreAudio capture nor the WKWebView `getUserMedia` fallback triggers the TCC prompt and voice fails silently. Screen Recording is preflighted before capture with guidance to the settings pane. Accessibility cannot be requested programmatically — the remote-control accept dialog surfaces the localized guidance and opens the pane directly. Saved passwords live in the login keychain; re-signed development builds may re-prompt for keychain access, and a denied prompt degrades to "type the password manually" instead of breaking lobby autofill.

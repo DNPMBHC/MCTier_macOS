@@ -583,22 +583,42 @@ export const LobbyForm: React.FC<LobbyFormProps> = ({ mode, onClose }) => {
   // 一键随机生成大厅名称和密码
   const handleRandomGenerate = async () => {
     const lobbyName = generateRandomLobbyName();
-    const password = await protectLobbyPassword(generateRandomPassword());
-
-    form.setFieldsValue({
-      lobbyName,
-      password,
-    });
-
-    message.success(tl('已随机生成大厅名称和密码', 'Random lobby name and password generated'));
+    try {
+      const password = await protectLobbyPassword(generateRandomPassword());
+      form.setFieldsValue({ lobbyName, password });
+      message.success(tl('已随机生成大厅名称和密码', 'Random lobby name and password generated'));
+    } catch {
+      // 凭据库不可用时名称照常填入，密码明确提示改为手动输入，而不是整次点击静默无效。
+      form.setFieldsValue({ lobbyName });
+      message.error(
+        tl(
+          '已生成大厅名称；密码加密失败（系统凭据库不可用），请手动输入密码',
+          'Lobby name generated; sealing the password failed (credential store unavailable), please type it'
+        )
+      );
+    }
   };
 
   const applyImportedLobby = async (
     invite: LobbyInvite & { playerName?: string; useDomain?: boolean }
   ) => {
-    let password: string;
-    try { password = await protectLobbyPassword(invite.password); }
-    catch { message.error(tl('无法读取加密密码，请检查系统凭据库或重新获取邀请', 'Cannot read encrypted password. Check system credentials or request a new invite')); return; }
+    // 最近大厅/收藏回填的密码本身就是本地信封，直接复用；只有邀请等明文
+    // 密码才需要封一次信。封密失败（系统凭据库不可用）不能打断整条回填：
+    // 名称、节点等照常填入，密码留空由用户手动输入。
+    let password = invite.password ?? '';
+    if (password && !isProtectedPassword(password)) {
+      try {
+        password = await protectLobbyPassword(password);
+      } catch {
+        message.error(
+          tl(
+            '无法加密保存该密码（系统凭据库不可用），请手动输入',
+            'Cannot seal the password (credential store unavailable); please type it manually'
+          )
+        );
+        password = '';
+      }
+    }
     const rawServerNode = invite.serverNode?.trim() || undefined;
     const legacyCustomSentinel = rawServerNode === 'custom';
     const serverNode = legacyCustomSentinel

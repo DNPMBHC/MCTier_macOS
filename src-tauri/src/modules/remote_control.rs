@@ -195,7 +195,7 @@ pub fn authorize_remote_input(
     ensure_main_window(&window)?;
     #[cfg(target_os = "macos")]
     if !macos_core_graphics::accessibility_trusted() {
-        return Err("macOS Accessibility permission required: open System Settings > Privacy & Security > Accessibility".to_string());
+        return Err("需要在「系统设置 › 隐私与安全性 › 辅助功能」中允许 MCTier 后才能被远程控制；可点击弹窗中的授权引导按钮打开该设置页".to_string());
     }
     let mut authorization = remote_input_authorization()
         .lock()
@@ -232,7 +232,7 @@ pub fn remote_inject_input(
     #[cfg(target_os = "macos")]
     {
         if !macos_core_graphics::accessibility_trusted() {
-            return Err("macOS Accessibility permission required: open System Settings > Privacy & Security > Accessibility".to_string());
+            return Err("需要在「系统设置 › 隐私与安全性 › 辅助功能」中允许 MCTier 后才能被远程控制；授权后重试即可".to_string());
         }
     }
     {

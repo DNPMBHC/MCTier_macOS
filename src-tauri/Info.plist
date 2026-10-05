@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+  <dict>
+    <!-- tauri-build 会把与 tauri.conf.json 同目录的 Info.plist 合并进打包产物。
+         没有这条 usage description 时，macOS 不会为原生 CoreAudio 采集和
+         WKWebView 的 getUserMedia 弹出麦克风授权框，语音直接静默失败。 -->
+    <key>NSMicrophoneUsageDescription</key>
+    <string>MCTier 需要访问麦克风来进行大厅语音通话与录制。</string>
+  </dict>
+</plist>
