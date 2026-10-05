@@ -378,7 +378,7 @@ pub struct UserConfig {
     pub always_on_top: Option<bool>,
     /// 是否记住窗口位置，默认 false
     pub remember_window_position: Option<bool>,
-    /// 关闭窗口时最小化到系统托盘（而非退出程序），默认 false
+    /// 关闭窗口时最小化到系统托盘（而非退出程序）。缺省值见 [`default_close_to_tray`]
     pub close_to_tray: Option<bool>,
     /// 启动后自动隐藏到系统托盘（后台运行），默认 false
     pub start_minimized: Option<bool>,
@@ -399,6 +399,14 @@ pub struct UserConfig {
     /// 屏幕录制保存目录；为空时使用用户 Videos/MCTier
     pub recording_directory: Option<String>,
     pub compliance_accepted: Option<bool>,
+}
+
+/// 「关闭窗口时最小化到系统托盘」的缺省值。
+///
+/// macOS 上红点关窗按 Mac 惯例是「隐藏」而不是「退出」，缺省隐藏到菜单栏、
+/// 点 Dock 或菜单栏图标随时唤回；Windows 保持原有默认（关闭即退出）。
+pub const fn default_close_to_tray() -> bool {
+    cfg!(target_os = "macos")
 }
 
 impl Default for UserConfig {
@@ -422,7 +430,7 @@ impl Default for UserConfig {
             private_signaling_server: Some("wss://mctier.pmhs.top/signaling".to_string()),
             always_on_top: Some(true),
             remember_window_position: Some(false),
-            close_to_tray: Some(false),
+            close_to_tray: Some(default_close_to_tray()),
             start_minimized: Some(false),
             custom_easytier_nodes: Some(Vec::new()),
             voice_volume: Some(1.0),
@@ -974,6 +982,31 @@ impl ConfigManager {
 mod tests {
     use super::*;
     use tempfile::TempDir;
+
+    #[test]
+    fn close_to_tray_default_matches_the_platform() {
+        // macOS 红点关窗是「隐藏」而非「退出」，缺省必须驻留菜单栏，
+        // 否则用户点 Dock 图标时应用已在退出流程里，看起来像唤不回来。
+        let expected = cfg!(target_os = "macos");
+        assert_eq!(default_close_to_tray(), expected);
+        assert_eq!(
+            UserConfig::default().close_to_tray,
+            Some(expected),
+            "结构体默认值必须与 default_close_to_tray() 一致，否则首次运行的配置文件会写死一个相反的值"
+        );
+    }
+
+    #[test]
+    fn explicit_close_to_tray_survives_a_round_trip() {
+        // 用户显式关掉「关闭时最小化到托盘」时必须尊重，不被平台缺省覆盖。
+        let config = UserConfig {
+            close_to_tray: Some(false),
+            ..UserConfig::default()
+        };
+        let json = serde_json::to_string(&config).expect("serialize");
+        let restored: UserConfig = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(restored.close_to_tray, Some(false));
+    }
 
     #[test]
     fn legacy_signaling_defaults_migrate_without_replacing_custom_endpoints() {

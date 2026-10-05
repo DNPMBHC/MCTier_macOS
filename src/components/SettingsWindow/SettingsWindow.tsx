@@ -30,6 +30,7 @@ import {
 } from '../../services/lobby/communityNodes';
 import './SettingsWindow.css';
 import { ComplianceDocuments } from '../ComplianceGate/ComplianceGate';
+import { defaultCloseToTray } from '../../utils/platform';
 
 /** 可自定义的全局快捷键项 */
 type HotkeyKey = 'micHotkey' | 'globalMuteHotkey' | 'pushToTalkHotkey' | 'summonHotkey';
@@ -114,7 +115,7 @@ export const SettingsWindow: React.FC<{ onClose: () => void }> = ({ onClose }) =
       const ups = settings.usePrivateServer || false;
       const aot = settings.alwaysOnTop ?? true;
       const rwp = settings.rememberWindowPosition ?? false;
-      const ctt = settings.closeToTray ?? false;
+      const ctt = settings.closeToTray ?? defaultCloseToTray;
       const sm = settings.startMinimized ?? false;
       const egr = settings.enableGpuRendering ?? true;
       const fsdd = settings.fileShareDownloadDir || null;
@@ -192,7 +193,7 @@ export const SettingsWindow: React.FC<{ onClose: () => void }> = ({ onClose }) =
         privateSignalingServer: 'wss://mctier.pmhs.top/signaling',
         alwaysOnTop: true,
         rememberWindowPosition: false,
-        closeToTray: false,
+        closeToTray: defaultCloseToTray,
         startMinimized: false,
         enableGpuRendering: true,
         fileShareDownloadDir: null,
@@ -305,7 +306,7 @@ export const SettingsWindow: React.FC<{ onClose: () => void }> = ({ onClose }) =
         privateSignalingServer: merged.privateSignalingServer?.trim() || null,
         alwaysOnTop: merged.alwaysOnTop !== undefined ? merged.alwaysOnTop : true,
         rememberWindowPosition: merged.rememberWindowPosition !== undefined ? merged.rememberWindowPosition : false,
-        closeToTray: merged.closeToTray !== undefined ? merged.closeToTray : false,
+        closeToTray: merged.closeToTray !== undefined ? merged.closeToTray : defaultCloseToTray,
         startMinimized: merged.startMinimized !== undefined ? merged.startMinimized : false,
         enableGpuRendering: merged.enableGpuRendering !== undefined ? merged.enableGpuRendering : true,
         // 自定义快捷键（空字符串表示禁用该快捷键，需原样传递而非转 null）

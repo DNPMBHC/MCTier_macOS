@@ -1,7 +1,7 @@
 // MCTier 后端模块
 pub mod modules;
 
-use log::{error, info};
+use log::{error, info, warn};
 use modules::app_core::AppCore;
 use modules::tauri_commands::AppState;
 use std::sync::Arc;
@@ -1435,18 +1435,6 @@ pub fn run() {
                 });
             }
 
-            // TEMP-TEST: 最小化恢复复现钩子（--mctier-test-minimize 启动 4 秒后自动最小化）
-            if std::env::args().any(|a| a == "--mctier-test-minimize") {
-                let app2 = app.handle().clone();
-                std::thread::spawn(move || {
-                    std::thread::sleep(std::time::Duration::from_secs(4));
-                    if let Some(w) = app2.get_webview_window("main") {
-                        let _ = w.minimize();
-                        info!("[restore-debug] test: window minimized");
-                    }
-                });
-            }
-
             println!("🔍 [Setup] 尝试获取 AppState...");
             if let Some(state) = app.try_state::<AppState>() {
                 println!("✅ [Setup] 成功获取 AppState");
@@ -1569,12 +1557,15 @@ pub fn run() {
                 if let Some(state) = ah.try_state::<AppState>() {
                     let core = Arc::clone(&state.core);
                     tauri::async_runtime::spawn(async move {
-                        // 读取「关闭时最小化到托盘」配置
+                        // 读取「关闭时最小化到托盘」配置。缺省值由平台决定
+                        // （macOS 隐藏到菜单栏，Windows 退出），与设置页显示保持一致。
                         let close_to_tray = {
+                            use crate::modules::config_manager::default_close_to_tray;
                             let cl = core.lock().await;
                             let cfg_mgr = cl.get_config_manager();
                             let mgr = cfg_mgr.lock().await;
-                            mgr.get_config().close_to_tray.unwrap_or(false)
+                            let cfg = mgr.get_config();
+                            cfg.close_to_tray.unwrap_or_else(default_close_to_tray)
                         };
 
                         if close_to_tray {
@@ -1612,22 +1603,12 @@ pub fn run() {
         #[cfg(target_os = "macos")]
         if let tauri::RunEvent::Reopen { has_visible_windows, .. } = event {
             info!("收到 macOS Reopen 事件，恢复主窗口 (has_visible_windows={has_visible_windows})");
+            // 句柄缺失时 restore_main_window 只能静默返回，点图标会「毫无反应」。
+            // 留下日志，让这类报告有据可查。
+            if _app_handle.get_webview_window("main").is_none() {
+                warn!("Reopen 事件找不到 main 窗口句柄，无法唤回窗口");
+            }
             restore_main_window(_app_handle);
-            // TEMP-TEST: 跟踪恢复后的窗口状态，验证最小化是否真的被还原。
-            let tracker = _app_handle.get_webview_window("main");
-            std::thread::spawn(move || {
-                for delay_ms in [200u64, 1000, 3000] {
-                    std::thread::sleep(std::time::Duration::from_millis(delay_ms));
-                    if let Some(w) = tracker.as_ref() {
-                        info!(
-                            "[restore-debug] t={delay_ms}ms minimized={:?} visible={:?} focused={:?}",
-                            w.is_minimized(),
-                            w.is_visible(),
-                            w.is_focused(),
-                        );
-                    }
-                }
-            });
         }
         #[cfg(not(target_os = "macos"))]
         let _ = &event;

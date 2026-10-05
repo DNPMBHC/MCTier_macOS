@@ -403,7 +403,7 @@ pub async fn get_settings(state: State<'_, AppState>) -> Result<serde_json::Valu
         "privateSignalingServer": config.private_signaling_server.clone(),
         "alwaysOnTop": config.always_on_top.unwrap_or(true),
         "rememberWindowPosition": config.remember_window_position.unwrap_or(false),
-        "closeToTray": config.close_to_tray.unwrap_or(false),
+        "closeToTray": config.close_to_tray.unwrap_or_else(crate::modules::config_manager::default_close_to_tray),
         "startMinimized": config.start_minimized.unwrap_or(false),
         "customEasytierNodes": config.custom_easytier_nodes.clone().unwrap_or_default(),
         "voiceVolume": config.voice_volume.unwrap_or(1.0),
