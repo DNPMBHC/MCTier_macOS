@@ -1435,6 +1435,18 @@ pub fn run() {
                 });
             }
 
+            // TEMP-TEST: 最小化恢复复现钩子（--mctier-test-minimize 启动 4 秒后自动最小化）
+            if std::env::args().any(|a| a == "--mctier-test-minimize") {
+                let app2 = app.handle().clone();
+                std::thread::spawn(move || {
+                    std::thread::sleep(std::time::Duration::from_secs(4));
+                    if let Some(w) = app2.get_webview_window("main") {
+                        let _ = w.minimize();
+                        info!("[restore-debug] test: window minimized");
+                    }
+                });
+            }
+
             println!("🔍 [Setup] 尝试获取 AppState...");
             if let Some(state) = app.try_state::<AppState>() {
                 println!("✅ [Setup] 成功获取 AppState");
@@ -1598,9 +1610,24 @@ pub fn run() {
         // macOS：窗口被隐藏或最小化到 Dock 之后，点 Dock 图标 / 重新打开应用
         // 系统只会发 Reopen 事件。不处理的话主窗口就再也唤不回来，看起来像「卡死」。
         #[cfg(target_os = "macos")]
-        if let tauri::RunEvent::Reopen { .. } = event {
-            info!("收到 macOS Reopen 事件，恢复主窗口");
+        if let tauri::RunEvent::Reopen { has_visible_windows, .. } = event {
+            info!("收到 macOS Reopen 事件，恢复主窗口 (has_visible_windows={has_visible_windows})");
             restore_main_window(_app_handle);
+            // TEMP-TEST: 跟踪恢复后的窗口状态，验证最小化是否真的被还原。
+            let tracker = _app_handle.get_webview_window("main");
+            std::thread::spawn(move || {
+                for delay_ms in [200u64, 1000, 3000] {
+                    std::thread::sleep(std::time::Duration::from_millis(delay_ms));
+                    if let Some(w) = tracker.as_ref() {
+                        info!(
+                            "[restore-debug] t={delay_ms}ms minimized={:?} visible={:?} focused={:?}",
+                            w.is_minimized(),
+                            w.is_visible(),
+                            w.is_focused(),
+                        );
+                    }
+                }
+            });
         }
         #[cfg(not(target_os = "macos"))]
         let _ = &event;
