@@ -1,7 +1,7 @@
 use crate::modules::error::AppError;
 use crate::modules::resource_manager::ResourceManager;
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 // macOS 走系统授权窗口提权（modules::macos_privilege），本地不再直接派生子进程，
 // 因此这里的 Stdio 只在 Windows / Linux 分支使用。
 #[cfg(any(windows, target_os = "linux"))]
@@ -12,10 +12,10 @@ use tokio::process::{Child, Command};
 use tokio::sync::Mutex;
 use tokio::time::{sleep, Duration};
 
-#[cfg(windows)]
-use crate::modules::privileged_helper::{self, HelperEvent, HelperSession};
 #[cfg(target_os = "macos")]
 use crate::modules::macos_privilege;
+#[cfg(windows)]
+use crate::modules::privileged_helper::{self, HelperEvent, HelperSession};
 
 /// 检查是否以管理员权限运行（仅 Windows）
 #[cfg(windows)]
@@ -125,6 +125,22 @@ pub struct NetworkService {
 }
 
 impl NetworkService {
+    /// 选择 EasyTier 可访问的配置目录根路径。macOS 通过 osascript 以 root
+    /// 启动 EasyTier，TCC 保护的 ~/Documents 对该进程不可访问。
+    fn easytier_config_root(working_dir: &Path) -> PathBuf {
+        #[cfg(target_os = "macos")]
+        {
+            let _ = working_dir;
+            crate::modules::app_paths::data_root()
+                .unwrap_or_else(|_| std::env::temp_dir().join(crate::modules::app_paths::APP_ID))
+                .join("easytier")
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            working_dir.to_path_buf()
+        }
+    }
+
     /// 创建新的网络服务实例
     ///
     /// # 参数
@@ -613,27 +629,24 @@ impl NetworkService {
         );
         log::info!("生成实例名称: {}", instance_name);
 
-        // 清理旧的配置目录（启动时清理）
+        // 清理旧的配置目录（启动时清理）。macOS root 子进程不能访问 TCC 保护的
+        // ~/Documents，即使 UI 用户已授权；所以它的配置目录放到 Application Support。
         #[cfg(not(windows))]
         {
+            let config_root = Self::easytier_config_root(working_dir);
             log::info!("正在清理旧的配置目录...");
-            if let Ok(entries) = std::fs::read_dir(&working_dir) {
+            if let Ok(entries) = std::fs::read_dir(&config_root) {
                 for entry in entries.flatten() {
                     if let Ok(file_name) = entry.file_name().into_string() {
-                        // 只清理以 config_mctier- 开头的目录
                         if file_name.starts_with("config_mctier-") {
                             let old_config_path = entry.path();
                             match std::fs::remove_dir_all(&old_config_path) {
-                                Ok(_) => {
-                                    log::info!("已清理旧配置目录: {:?}", old_config_path);
-                                }
-                                Err(e) => {
-                                    log::warn!(
-                                        "清理旧配置目录失败: {:?}, 错误: {}",
-                                        old_config_path,
-                                        e
-                                    );
-                                }
+                                Ok(_) => log::info!("已清理旧配置目录: {:?}", old_config_path),
+                                Err(e) => log::warn!(
+                                    "清理旧配置目录失败: {:?}, 错误: {}",
+                                    old_config_path,
+                                    e
+                                ),
                             }
                         }
                     }
@@ -641,8 +654,9 @@ impl NetworkService {
             }
         }
 
-        // 创建独立的配置目录
-        let config_dir = working_dir.join(format!("config_{}", instance_name));
+        // 创建独立的配置目录。macOS 放在用户数据目录中，避免 root 进程触发 TCC 拒绝。
+        let config_dir =
+            Self::easytier_config_root(working_dir).join(format!("config_{}", instance_name));
         // The direct Windows development path does not use the privileged
         // helper, so it must materialize the per-instance config directory
         // before spawning EasyTier. Release Windows builds create it in the
@@ -1456,19 +1470,43 @@ impl NetworkService {
                 return msg.to_string();
             }
 
+            #[cfg(target_os = "macos")]
+            {
+                // macOS root 启动时访问受 TCC 保护的 Documents 目录会得到 EPERM。
+                // 该错误发生在 EasyTier 读取 config-dir 之前，必须给出针对性提示。
+                let permission_denied = recent_stderr.iter().any(|line| {
+                    let lower = line.to_lowercase();
+                    lower.contains("operation not permitted") || lower.contains("os error 1")
+                });
+                if permission_denied {
+                    return "EasyTier 访问 macOS 受保护目录或虚拟网卡时被拒绝（Operation not permitted）：已自动使用应用数据目录；若仍失败，请检查 macOS 管理员授权及其它 VPN/utun 占用".to_string();
+                }
+            }
+
+            #[cfg(target_os = "windows")]
+            let fallback = "可能被安全软件拦截、虚拟网卡创建失败或缺少运行库";
+            #[cfg(target_os = "macos")]
+            let fallback =
+                "可能是系统权限或虚拟网卡访问被拒绝，请检查 macOS 管理员授权与 VPN/utun 占用";
+            #[cfg(target_os = "linux")]
+            let fallback = "可能是 TUN 设备权限不足或缺少运行库，请确认 /dev/net/tun 可用";
             if let Some(hint) = stderr_hint {
                 return format!("EasyTier 进程意外终止（退出码 {}）：{}", code, hint);
             }
-            return format!(
-                "EasyTier 进程意外终止（退出码 {}）：可能被安全软件拦截、虚拟网卡创建失败或缺少运行库",
-                code
-            );
+            return format!("EasyTier 进程意外终止（退出码 {}）：{}", code, fallback);
         }
 
         if let Some(hint) = stderr_hint {
             return format!("EasyTier 进程意外终止：{}", hint);
         }
-        "EasyTier 进程意外终止：可能被安全软件拦截、虚拟网卡创建失败或缺少运行库，请尝试以管理员身份运行并将本软件加入杀毒软件白名单".to_string()
+        #[cfg(target_os = "windows")]
+        return "EasyTier 进程意外终止：可能被安全软件拦截、虚拟网卡创建失败或缺少运行库，请以管理员身份运行并将本软件加入杀毒软件白名单".to_string();
+        #[cfg(target_os = "macos")]
+        return "EasyTier 进程意外终止：请检查 macOS 管理员授权、应用数据目录权限及 VPN/utun 占用"
+            .to_string();
+        #[cfg(target_os = "linux")]
+        return "EasyTier 进程意外终止：请确认 /dev/net/tun 可用且 EasyTier 具备 cap_net_admin"
+            .to_string();
     }
 
     fn redact_sensitive_line(line: &str) -> String {
@@ -1994,7 +2032,10 @@ impl NetworkService {
                     log::info!("🔄 [StopEasyTier] 正在等待 macOS 特权 EasyTier 退出（最多8秒）...");
                     match tokio::time::timeout(Duration::from_secs(8), child.wait()).await {
                         Ok(Ok(status)) => {
-                            log::info!("✅ [StopEasyTier] EasyTier 进程已退出，状态码: {:?}", status);
+                            log::info!(
+                                "✅ [StopEasyTier] EasyTier 进程已退出，状态码: {:?}",
+                                status
+                            );
                             success = true;
                         }
                         Ok(Err(e)) => log::warn!("⚠️ [StopEasyTier] 等待进程退出时出错: {}", e),
@@ -2236,6 +2277,20 @@ mod tests {
     use super::*;
 
     #[test]
+    fn easytier_config_root_uses_app_data_on_macos() {
+        let working_dir = PathBuf::from("/Users/example/Documents/MCTier/target/debug");
+        let root = NetworkService::easytier_config_root(&working_dir);
+        #[cfg(target_os = "macos")]
+        {
+            let app_data = crate::modules::app_paths::data_root().expect("app data root");
+            assert!(root.starts_with(app_data));
+            assert!(!root.starts_with(&working_dir));
+        }
+        #[cfg(not(target_os = "macos"))]
+        assert_eq!(root, working_dir);
+    }
+
+    #[test]
     fn test_connection_status_serialization() {
         let status = ConnectionStatus::Connected("10.144.144.1".to_string());
         let json = serde_json::to_string(&status).unwrap();
@@ -2366,10 +2421,23 @@ mod tests {
 
             // 用户取消管理员授权时 osascript 的 stderr 必须转成可操作的中文提示，
             // 而不是把 "execution error: User canceled. (-128)" 原样抛给用户。
-            let canceled =
-                NetworkService::describe_exit_failure(Some(-128), &["execution error: User canceled. (-128)".to_string()]);
+            let canceled = NetworkService::describe_exit_failure(
+                Some(-128),
+                &["execution error: User canceled. (-128)".to_string()],
+            );
             assert!(canceled.contains("管理员授权"));
             assert!(!canceled.contains("User canceled"));
+
+            let eperm = NetworkService::describe_exit_failure(
+                Some(1),
+                &["error: Operation not permitted (os error 1)".to_string()],
+            );
+            assert!(eperm.contains("受保护目录或虚拟网卡"));
+            assert!(!eperm.contains("安全软件") && !eperm.contains("WinTun"));
+
+            let fallback = NetworkService::describe_exit_failure(Some(1), &[]);
+            assert!(fallback.contains("macOS 管理员授权"));
+            assert!(!fallback.contains("以管理员身份运行"));
         }
     }
 
@@ -2418,9 +2486,15 @@ mod tests {
             let args: Vec<_> = command.as_std().get_args().collect();
             let index = args.iter().position(|arg| *arg == "--private-mode");
             if enabled {
-                assert_eq!(args[index.expect("private mode must be enabled") + 1], "true");
+                assert_eq!(
+                    args[index.expect("private mode must be enabled") + 1],
+                    "true"
+                );
             } else {
-                assert!(index.is_none(), "disabled private mode must use EasyTier's default");
+                assert!(
+                    index.is_none(),
+                    "disabled private mode must use EasyTier's default"
+                );
             }
         }
     }
@@ -2428,8 +2502,7 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn test_private_mode_arguments_accepted_by_bundled_easytier() {
-        let core = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../binaries/easytier-core.exe");
+        let core = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../binaries/easytier-core.exe");
         let config_file = tempfile::NamedTempFile::new().unwrap();
         std::fs::write(config_file.path(), "[flags]\nprivate_mode = false\n").unwrap();
         for enabled in [false, true] {
@@ -2440,12 +2513,17 @@ mod tests {
             let mut command = Command::new(&core);
             NetworkService::apply_advanced_config(&mut command, &config);
             // Validate the real CLI without creating a TUN device or joining a network.
-            let output = command.as_std_mut()
+            let output = command
+                .as_std_mut()
                 .args(["--check-config", "--config-file"])
                 .arg(config_file.path())
-                .output().expect("run bundled EasyTier CLI");
-            assert!(output.status.success(), "private_mode={enabled}: {}",
-                String::from_utf8_lossy(&output.stderr));
+                .output()
+                .expect("run bundled EasyTier CLI");
+            assert!(
+                output.status.success(),
+                "private_mode={enabled}: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
         }
     }
 
