@@ -56,22 +56,31 @@ rm -f "$STOP_FILE"
 "$@" >"$OUT_FIFO" 2>"$ERR_FIFO" &
 EASYTIER_PID=$!
 
-# 三种退出条件：easytier 自己退出、MCTier 请求停止、MCTier 已经不存在。
-# 最后一条保证应用崩溃或被杀之后不会留下 root 权限的孤儿进程。
+# Stop only when requested or when the owning app disappears. Natural EasyTier
+# exit must preserve its status so the UI can report a real failure code.
+SHOULD_STOP=0
 while kill -0 "$EASYTIER_PID" 2>/dev/null; do
-  if [ -e "$STOP_FILE" ]; then break; fi
-  if ! kill -0 "$APP_PID" 2>/dev/null; then break; fi
+  if [ -e "$STOP_FILE" ] || ! kill -0 "$APP_PID" 2>/dev/null; then
+    SHOULD_STOP=1
+    break
+  fi
   sleep 0.3
 done
 
-kill -TERM "$EASYTIER_PID" 2>/dev/null
-WAITED=0
-while kill -0 "$EASYTIER_PID" 2>/dev/null && [ "$WAITED" -lt 25 ]; do
-  sleep 0.2
-  WAITED=$((WAITED + 1))
-done
-kill -KILL "$EASYTIER_PID" 2>/dev/null
-exit 0
+if [ "$SHOULD_STOP" -eq 1 ]; then
+  kill -TERM "$EASYTIER_PID" 2>/dev/null
+  WAITED=0
+  while kill -0 "$EASYTIER_PID" 2>/dev/null && [ "$WAITED" -lt 25 ]; do
+    sleep 0.2
+    WAITED=$((WAITED + 1))
+  done
+  kill -KILL "$EASYTIER_PID" 2>/dev/null
+  wait "$EASYTIER_PID" 2>/dev/null
+  exit 0
+fi
+
+wait "$EASYTIER_PID"
+exit $?
 "#;
 
 /// 一次特权启动留下的状态，用于停止与清理。
@@ -235,8 +244,7 @@ pub fn request_stop_for_all_sessions() -> usize {
         }
         let stop_file = entry.path().join("stop");
         // 只写已经存在的运行目录，不凭空创建会话。
-        if entry.path().join("supervise.sh").exists()
-            && std::fs::write(&stop_file, b"stop").is_ok()
+        if entry.path().join("supervise.sh").exists() && std::fs::write(&stop_file, b"stop").is_ok()
         {
             notified += 1;
         }
@@ -411,6 +419,45 @@ mod tests {
         assert!(!script.replace("\\\"", "").contains('"'));
     }
 
+    #[test]
+    fn supervisor_preserves_natural_exit_code_and_stops_cleanly() {
+        use std::process::Command as StdCommand;
+        use std::time::Duration;
+
+        let dir = tempfile::tempdir().expect("temp dir");
+        let script = dir.path().join("supervise.sh");
+        let stop = dir.path().join("stop");
+        let stdout = dir.path().join("stdout");
+        let stderr = dir.path().join("stderr");
+        std::fs::write(&script, SUPERVISOR_SCRIPT).expect("write supervisor");
+
+        let make_command = |child_args: &[&str]| {
+            let mut command = StdCommand::new("/bin/sh");
+            command
+                .arg(&script)
+                .arg(&stop)
+                .arg(std::process::id().to_string())
+                .arg(&stdout)
+                .arg(&stderr)
+                .arg(dir.path())
+                .args(child_args);
+            command
+        };
+
+        let status = make_command(&["/bin/sh", "-c", "exit 37"])
+            .status()
+            .expect("run supervisor");
+        assert_eq!(status.code(), Some(37));
+
+        let mut supervisor = make_command(&["/bin/sh", "-c", "sleep 10"])
+            .spawn()
+            .expect("spawn supervisor");
+        std::thread::sleep(Duration::from_millis(500));
+        std::fs::write(&stop, b"stop").expect("request stop");
+        let status = supervisor.wait().expect("wait for supervisor");
+        assert_eq!(status.code(), Some(0));
+    }
+
     /// FIFO 必须"先有读者再打开写者"才能不阻塞，且写者退出后要给读者 EOF，
     /// 否则启动会卡死在授权之后、或者进程退出后监控任务永远挂着。
     #[tokio::test]
@@ -457,7 +504,10 @@ mod tests {
 
         assert_eq!(
             collected,
-            vec!["ipv4 = 10.126.126.5/24".to_string(), "tun device error".to_string()]
+            vec![
+                "ipv4 = 10.126.126.5/24".to_string(),
+                "tun device error".to_string()
+            ]
         );
     }
 }
