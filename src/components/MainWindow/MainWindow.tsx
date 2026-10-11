@@ -97,6 +97,28 @@ export const MainWindow: React.FC<{ startupReady?: boolean }> = ({ startupReady 
     return () => window.removeEventListener('mctier-open-join', onDeepLink as EventListener);
   }, []);
 
+  // macOS 应用菜单栏的「设置…」(Cmd+,) 与「关于 MCTier」通过后端事件触发；
+  // App.tsx 收到 Tauri 事件后转成这两个 window 事件，这里打开对应浮层。
+  useEffect(() => {
+    const openSettings = () => {
+      if (useAppStore.getState().appState === 'connecting') return;
+      setShowForm(false);
+      setShowAbout(false);
+      handleShowSettings();
+    };
+    const openAbout = () => {
+      setShowForm(false);
+      setShowSettings(false);
+      setShowAbout(true);
+    };
+    window.addEventListener('mctier-menu-settings', openSettings as EventListener);
+    window.addEventListener('mctier-menu-about', openAbout as EventListener);
+    return () => {
+      window.removeEventListener('mctier-menu-settings', openSettings as EventListener);
+      window.removeEventListener('mctier-menu-about', openAbout as EventListener);
+    };
+  }, []);
+
   // ESC键返回 - 在表单或关于页面时返回主界面
   useEscapeKey(() => {
     if (showForm) {

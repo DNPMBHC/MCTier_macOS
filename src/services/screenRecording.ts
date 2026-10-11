@@ -90,7 +90,12 @@ class ScreenRecording {
       this.tick = setInterval(() => { if (this.state.phase === 'recording') this.update({ seconds: Math.floor((this.elapsed + performance.now() - this.recordingAt) / 1000) }); }, 500);
       this.update({ phase: 'recording', seconds: 0, path: this.output.path });
     } catch (error) {
-      if ((error as Error).name !== 'AbortError') this.update({ error: String(error) });
+      // 麦克风未授权时弹出系统授权引导，与开麦/试音一致，而不是只在面板里报错。
+      if (error instanceof DOMException && (error.name === 'NotAllowedError' || error.name === 'PermissionDeniedError')) {
+        window.dispatchEvent(new CustomEvent('mctier-microphone-permission-required'));
+      } else if ((error as Error).name !== 'AbortError') {
+        this.update({ error: String(error) });
+      }
       await this.release(true);
     }
   }

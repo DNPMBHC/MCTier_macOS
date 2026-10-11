@@ -1561,3 +1561,40 @@ html[data-theme='light'] :is(
 ):is(:hover, :focus-visible, :active) {
   transform: none !important;
 }
+
+/* ========================================
+   macOS 性能减负
+   ========================================
+   WKWebView 对 `backdrop-filter`/大半径 `filter: blur` 的合成开销远高于 Chromium，
+   叠加多个常驻 `infinite` 装饰动画后，Mac 上滚动与窗口交互会明显掉帧。这里在
+   macOS 平台默认停掉纯装饰性的无限动画，并把超大 blur 收敛到可接受范围——
+   视觉几乎无损，但省下每帧的离屏合成。功能性动画（加载 spinner、说话波形、
+   录音计、未读提示）保留，因为它们传达状态。 */
+:root[data-platform='macos'] .main-window-title,
+:root[data-platform='macos'] .settings-bg-orb-1,
+:root[data-platform='macos'] .settings-bg-orb-2,
+:root[data-platform='macos'] .about-window::before,
+:root[data-platform='macos'] .mini-game-tip,
+:root[data-platform='macos'] .mini-game-tip .tip-icon,
+:root[data-platform='macos'] .version-error-icon-wrapper::before,
+:root[data-platform='macos'] .confirm-icon,
+:root[data-platform='macos'] .quark-entry-inviting,
+:root[data-platform='macos'] .quark-entry-inviting::after,
+:root[data-platform='macos'] .quark-entry-inviting .quark-heart {
+  animation: none !important;
+}
+
+/* 大半径光晕 blur 在 Mac 上收敛：装饰性光斑降到 24px 以内，观感相近但省合成。 */
+:root[data-platform='macos'] .settings-bg-orb-1,
+:root[data-platform='macos'] .settings-bg-orb-2 {
+  filter: blur(24px);
+}
+
+/* 关掉 GPU 渲染时（enable_gpu_rendering=false），彻底移除所有毛玻璃与装饰动画，
+   把界面降到纯色实底，给低配/卡顿机器一个干净的回退。 */
+:root[data-platform='macos'] .gpu-rendering-disabled *,
+:root[data-platform='macos'] .gpu-rendering-disabled *::before,
+:root[data-platform='macos'] .gpu-rendering-disabled *::after {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}

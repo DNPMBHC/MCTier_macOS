@@ -23,6 +23,7 @@ pub(crate) fn handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Sen
         commands::set_mic_enabled,
         commands::open_microphone_privacy_settings,
         commands::open_accessibility_privacy_settings,
+        commands::set_dock_badge,
         commands::reset_microphone_permission,
         commands::mute_player,
         commands::mute_all,

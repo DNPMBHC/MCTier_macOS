@@ -273,7 +273,7 @@ pub fn cleanup(session: &ElevatedSession) {
     }
 }
 
-fn create_fifo(path: &Path) -> Result<(), String> {
+pub(crate) fn create_fifo(path: &Path) -> Result<(), String> {
     let c_path = CString::new(path.as_os_str().as_bytes())
         .map_err(|_| format!("FIFO 路径包含非法字符: {}", path.display()))?;
     // 0600：只有当前用户（以及 root）可以读写，避免其它本地用户注入伪日志。
@@ -294,7 +294,7 @@ fn create_fifo(path: &Path) -> Result<(), String> {
 /// 驱动。刻意不用 `tokio::fs::File`：那条路会把每次读取派发到阻塞线程池上，
 /// 而"用户取消授权 → 写者永远不会出现"是常见路径，读取会一直停在被占用的阻塞线程上，
 /// 反复取消就会不断堆积。走 reactor 时同一个 future 只是安静地挂在事件循环上。
-fn open_fifo_reader(path: &Path) -> Result<FifoReader, String> {
+pub(crate) fn open_fifo_reader(path: &Path) -> Result<FifoReader, String> {
     let c_path = CString::new(path.as_os_str().as_bytes())
         .map_err(|_| format!("FIFO 路径包含非法字符: {}", path.display()))?;
     let fd: RawFd = unsafe { libc::open(c_path.as_ptr(), libc::O_RDONLY | libc::O_NONBLOCK) };
@@ -349,7 +349,7 @@ impl AsRawFd for FifoReader {
 }
 
 /// POSIX shell 单引号包裹：参数里的单引号用 `'\''` 转义。
-fn shell_quote(value: &str) -> String {
+pub(crate) fn shell_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\\''"))
 }
 
@@ -357,7 +357,7 @@ fn shell_quote(value: &str) -> String {
 ///
 /// 换行无法出现在 AppleScript 字符串字面量里，出现时直接替换成空格，
 /// 避免构造出语法错误、让用户看到一个含义不明的授权弹窗。
-fn applescript_escape(command: &str) -> String {
+pub(crate) fn applescript_escape(command: &str) -> String {
     command
         .replace('\n', " ")
         .replace('\r', " ")

@@ -454,11 +454,20 @@ fn open(device: AudioObjectId, voice_processing: bool) -> Result<Running, String
             AudioUnitSetProperty(unit, PROP_ENABLE_IO, SCOPE_OUTPUT, 0, (&disable as *const u32).cast(), 4),
             "禁用音频输出",
         )?;
-        // The voice IO unit always follows the system default, so pinning a device on
-        // it is pointless; it is only used when the caller asked for the default.
-        if !voice_processing && device != 0 {
+        // AUHAL 输出单元跑在输入模式时，必须显式绑定「当前设备」，哪怕用的是系统默认麦克风：
+        // 不绑定的话单元会默认挂到系统默认**输出**设备（扬声器）上，而扬声器没有输入流，
+        // 于是输入回调渲染不出任何采样，表现就是采集“成功”、ring 永远为空、读取 3 秒超时
+        // 报“麦克风无响应”——正是对方听不到声音的根因。device==0 时解析出真正的默认输入设备。
+        //
+        // 语音处理单元(vpio)例外：它自动跟随系统默认输入，设了反而可能被拒；仅 HAL 单元需要绑定。
+        if !voice_processing {
+            let bind_device = if device != 0 {
+                device
+            } else {
+                default_input_device().ok_or("找不到可用的默认输入设备")?
+            };
             check(
-                AudioUnitSetProperty(unit, PROP_CURRENT_DEVICE, SCOPE_GLOBAL, 0, (&device as *const u32).cast(), 4),
+                AudioUnitSetProperty(unit, PROP_CURRENT_DEVICE, SCOPE_GLOBAL, 0, (&bind_device as *const u32).cast(), 4),
                 "选择输入设备",
             )?;
         }
@@ -523,13 +532,37 @@ fn open(device: AudioObjectId, voice_processing: bool) -> Result<Running, String
     }
 }
 
+/// 系统语音处理单元(vpio)是否在本机可用。
+///
+/// 很多 Mac（尤其没有合规麦克风或特定 SDK 组合时）打开 vpio 会以
+/// `kAudioUnitErr_FailedInitialization (-10875)` 失败，而 `AudioUnitInitialize`
+/// 要卡约 3~4 秒才返回这个失败——于是每次开麦都白等几秒再回退到 HAL 单元，
+/// 表现就是“麦克风激活很慢”。首次失败后把结果缓存下来，后续直接走 HAL 单元，
+/// 开麦几乎瞬时。None=未探测过，Some(false)=已知不可用，Some(true)=可用。
+static VOICE_PROCESSING_AVAILABLE: std::sync::atomic::AtomicU8 =
+    std::sync::atomic::AtomicU8::new(0); // 0=未知, 1=可用, 2=不可用
+
 fn open_with_fallback(device: AudioObjectId, system_processing: bool) -> Result<Running, String> {
+    use std::sync::atomic::Ordering;
     // Voice processing follows the system default device, so an explicit device
     // selection always uses the plain HAL unit.
     if system_processing && device == 0 {
-        match open(0, true) {
-            Ok(running) => return Ok(running),
-            Err(error) => log::warn!("系统语音处理不可用，改用原始采集: {error}"),
+        // 已知不可用就直接跳过，不再花几秒去撞同一个失败。
+        if VOICE_PROCESSING_AVAILABLE.load(Ordering::Acquire) != 2 {
+            match open(0, true) {
+                Ok(running) => {
+                    VOICE_PROCESSING_AVAILABLE.store(1, Ordering::Release);
+                    return Ok(running);
+                }
+                Err(error) => {
+                    VOICE_PROCESSING_AVAILABLE.store(2, Ordering::Release);
+                    log::warn!(
+                        "系统语音处理不可用，改用原始采集（后续开麦将直接跳过以加快速度）: {error}"
+                    );
+                }
+            }
+        } else {
+            log::debug!("已知系统语音处理不可用，直接使用原始采集");
         }
     }
     open(device, false)

@@ -178,22 +178,52 @@ impl VoiceService {
     async fn enumerate_audio_devices(&self) -> Result<Vec<AudioDevice>, VoiceError> {
         log::info!("开始枚举音频设备");
 
-        // 注意：这里是模拟实现，实际项目中需要使用 cpal 或其他音频库
-        // 来真正枚举系统音频设备
         let mut devices = Vec::new();
 
-        // 添加默认麦克风设备
-        devices.push(AudioDevice {
-            id: "default_mic".to_string(),
-            name: "默认麦克风".to_string(),
-            device_type: DeviceType::Microphone,
-            is_default: true,
-        });
+        // 麦克风：直接复用原生采集模块的真实设备枚举（CoreAudio / WASAPI），
+        // 不再返回写死的占位“默认麦克风”。枚举在阻塞线程里跑，避免卡住 async 执行器。
+        // 平台不支持或枚举为空时，兜底一个“系统默认麦克风”条目，保证始终有一个可选项，
+        // 真正采集时空 device_id 会被解析为系统默认输入设备。
+        let native_inputs =
+            tokio::task::spawn_blocking(crate::modules::native_microphone::input_devices)
+                .await
+                .unwrap_or_default();
+        if native_inputs.is_empty() {
+            devices.push(AudioDevice {
+                id: String::new(),
+                name: "系统默认麦克风".to_string(),
+                device_type: DeviceType::Microphone,
+                is_default: true,
+            });
+        } else {
+            for input in native_inputs {
+                devices.push(AudioDevice {
+                    id: input.device_id,
+                    name: input.label,
+                    device_type: DeviceType::Microphone,
+                    is_default: input.is_default,
+                });
+            }
+            // 若原生列表里没有任何一个被标记为默认，补一个“系统默认”占位，
+            // 让界面始终能回落到跟随系统默认设备。
+            if !devices.iter().any(|d| d.is_default) {
+                devices.insert(
+                    0,
+                    AudioDevice {
+                        id: String::new(),
+                        name: "系统默认麦克风".to_string(),
+                        device_type: DeviceType::Microphone,
+                        is_default: true,
+                    },
+                );
+            }
+        }
 
-        // 添加默认扬声器设备
+        // 扬声器：输出设备的选择由前端 WebAudio setSinkId 处理（浏览器层能拿到完整列表），
+        // 后端只保留一个“系统默认扬声器”条目用于状态占位，不再编造多个假设备。
         devices.push(AudioDevice {
-            id: "default_speaker".to_string(),
-            name: "默认扬声器".to_string(),
+            id: String::new(),
+            name: "系统默认扬声器".to_string(),
             device_type: DeviceType::Speaker,
             is_default: true,
         });
@@ -969,15 +999,21 @@ mod tests {
         let service = VoiceService::new();
         service.initialize().await.unwrap();
 
-        // 选择默认麦克风
-        let result = service.select_microphone("default_mic").await;
+        // 选择一个真实存在的麦克风设备（枚举出的第一个），不再依赖写死的占位 id。
+        let devices = service.get_audio_devices().await;
+        let mic_id = devices
+            .iter()
+            .find(|d| d.device_type == DeviceType::Microphone)
+            .map(|d| d.id.clone())
+            .expect("应至少有一个麦克风设备（含系统默认占位）");
+        let result = service.select_microphone(&mic_id).await;
         assert!(result.is_ok());
 
         let selected = service.get_selected_microphone().await;
-        assert_eq!(selected, Some("default_mic".to_string()));
+        assert_eq!(selected, Some(mic_id));
 
         // 选择不存在的设备
-        let result = service.select_microphone("non_existent").await;
+        let result = service.select_microphone("non_existent_device_id_xyz").await;
         assert!(result.is_err());
     }
 
@@ -986,15 +1022,21 @@ mod tests {
         let service = VoiceService::new();
         service.initialize().await.unwrap();
 
-        // 选择默认扬声器
-        let result = service.select_speaker("default_speaker").await;
+        // 选择枚举出的扬声器（当前为“系统默认扬声器”占位，id 为空字符串）。
+        let devices = service.get_audio_devices().await;
+        let speaker_id = devices
+            .iter()
+            .find(|d| d.device_type == DeviceType::Speaker)
+            .map(|d| d.id.clone())
+            .expect("应至少有一个扬声器设备（系统默认占位）");
+        let result = service.select_speaker(&speaker_id).await;
         assert!(result.is_ok());
 
         let selected = service.get_selected_speaker().await;
-        assert_eq!(selected, Some("default_speaker".to_string()));
+        assert_eq!(selected, Some(speaker_id));
 
         // 选择不存在的设备
-        let result = service.select_speaker("non_existent").await;
+        let result = service.select_speaker("non_existent_device_id_xyz").await;
         assert!(result.is_err());
     }
 

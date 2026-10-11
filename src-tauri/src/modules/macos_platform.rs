@@ -22,8 +22,48 @@ fn xml_escape(value: &str) -> String {
         .replace('\'', "&apos;")
 }
 
+/// 从可执行文件路径回溯出所在的 `.app` 包根目录。
+///
+/// 打包后的可执行文件位于 `MCTier.app/Contents/MacOS/MCTier`，自启动若直接
+/// 拉起这个内部可执行文件，进程就没有 Bundle 身份：Dock 图标、`NSApplication`
+/// 行为、`single_instance` 匹配都会出问题。回溯到 `.app` 后用 `open -a` 启动，
+/// 系统才会按正常应用方式拉起它。开发构建（裸可执行文件）找不到 `.app`，返回
+/// None，由调用方回退到直接启动。
+fn app_bundle_root(executable: &Path) -> Option<PathBuf> {
+    let mut current = executable;
+    while let Some(parent) = current.parent() {
+        if parent
+            .extension()
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("app"))
+        {
+            return Some(parent.to_path_buf());
+        }
+        current = parent;
+    }
+    None
+}
+
+/// 生成 LaunchAgent plist 的 ProgramArguments。
+///
+/// 打包运行时用 `/usr/bin/open -a <MCTier.app>` 保留 Bundle 身份；裸可执行文件
+/// （开发构建）直接写可执行路径。拆成独立函数是为了能脱离文件系统做单元测试。
+fn launch_program_arguments(executable: &Path) -> Vec<String> {
+    match app_bundle_root(executable) {
+        Some(app) => vec![
+            "/usr/bin/open".to_string(),
+            "-a".to_string(),
+            app.to_string_lossy().into_owned(),
+        ],
+        None => vec![executable.to_string_lossy().into_owned()],
+    }
+}
+
 fn launch_agent_plist(executable: &Path) -> String {
-    let program = xml_escape(&executable.to_string_lossy());
+    let arguments = launch_program_arguments(executable)
+        .iter()
+        .map(|arg| format!("             <string>{}</string>", xml_escape(arg)))
+        .collect::<Vec<_>>()
+        .join("\n");
     format!(
         "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n\
          <!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n\
@@ -33,7 +73,7 @@ fn launch_agent_plist(executable: &Path) -> String {
            <string>{LAUNCH_AGENT_LABEL}</string>\n\
            <key>ProgramArguments</key>\n\
            <array>\n\
-             <string>{program}</string>\n\
+{arguments}\n\
            </array>\n\
            <key>RunAtLoad</key>\n\
            <true/>\n\
@@ -134,6 +174,10 @@ extern "C" {
     #[allow(clashing_extern_declarations)]
     #[link_name = "objc_msgSend"]
     fn msg_send_end_activity(receiver: Obj, sel: Sel, token: u64) -> Obj;
+    // 单对象参数：用于 sharedApplication.dockTile.setBadgeLabel: 这类调用。
+    #[allow(clashing_extern_declarations)]
+    #[link_name = "objc_msgSend"]
+    fn msg_send_set_object(receiver: Obj, sel: Sel, arg: Obj) -> Obj;
 }
 
 static REALTIME_ACTIVITY_ACTIVE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
@@ -183,6 +227,9 @@ fn end_realtime_activity(token: u64) {
 /// 幂等且可从任意线程调用；token 配对由 active 边沿驱动，避免泄漏重复的 activity。
 pub fn set_realtime_activity(active: bool) {
     use std::sync::atomic::Ordering;
+    // App Nap 豁免只防「隐藏窗口被节流」，不防系统休眠。实时会话期间同时申请
+    // 防休眠断言，两者职责不同但同生命周期，这里统一按会话边沿驱动。
+    crate::modules::macos_power::set_prevent_sleep(active);
     let was = REALTIME_ACTIVITY_ACTIVE.swap(active, Ordering::AcqRel);
     if was == active {
         return;
@@ -200,15 +247,81 @@ pub fn set_realtime_activity(active: bool) {
     }
 }
 
+/// 设置 Dock 图标角标（未读提示）。空字符串清除角标。
+///
+/// 走 `NSApplication.sharedApplication.dockTile.setBadgeLabel:`。必须在主线程
+/// 调用——AppKit 的 UI 对象不是线程安全的，调用方（Tauri 命令）已在主线程里。
+/// label 建议传数字或 "99+"，过长会被 Dock 截断。
+pub fn set_dock_badge(label: &str) {
+    use core_foundation::base::TCFType;
+    use core_foundation::string::CFString;
+    unsafe {
+        let app_class = objc_getClass(c"NSApplication".as_ptr());
+        if app_class.is_null() {
+            return;
+        }
+        let app = msg_send_object(app_class, sel_registerName(c"sharedApplication".as_ptr()));
+        if app.is_null() {
+            return;
+        }
+        let dock_tile = msg_send_object(app, sel_registerName(c"dockTile".as_ptr()));
+        if dock_tile.is_null() {
+            return;
+        }
+        // 空字符串 → 传 nil 清除角标；否则桥接成 NSString。
+        let badge_obj: Obj = if label.is_empty() {
+            std::ptr::null_mut()
+        } else {
+            let string = CFString::new(label);
+            string.as_concrete_TypeRef() as Obj
+        };
+        msg_send_set_object(
+            dock_tile,
+            sel_registerName(c"setBadgeLabel:".as_ptr()),
+            badge_obj,
+        );
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn plist_escapes_executable_path() {
+        // 打包路径应回溯到 .app 并用 open -a 启动，特殊字符需转义。
         let plist = launch_agent_plist(Path::new("/tmp/MCTier<&\".app/Contents/MacOS/MCTier"));
-        assert!(plist.contains("/tmp/MCTier&lt;&amp;&quot;.app/Contents/MacOS/MCTier"));
+        assert!(plist.contains("<string>/usr/bin/open</string>"));
+        assert!(plist.contains("<string>-a</string>"));
+        assert!(plist.contains("/tmp/MCTier&lt;&amp;&quot;.app"));
+        // 不应再直接写内部可执行文件（那样会丢失 Bundle 身份）。
+        assert!(!plist.contains("Contents/MacOS/MCTier</string>"));
         assert!(plist.contains("<key>RunAtLoad</key>"));
+    }
+
+    /// 可执行文件在 .app 内时回溯出包根；裸可执行文件（开发构建）回退为直接启动。
+    #[test]
+    fn launch_arguments_prefer_the_app_bundle() {
+        let bundled = launch_program_arguments(Path::new(
+            "/Applications/MCTier.app/Contents/MacOS/MCTier",
+        ));
+        assert_eq!(
+            bundled,
+            vec![
+                "/usr/bin/open".to_string(),
+                "-a".to_string(),
+                "/Applications/MCTier.app".to_string(),
+            ]
+        );
+
+        let bare = launch_program_arguments(Path::new("/tmp/target/debug/mctier"));
+        assert_eq!(bare, vec!["/tmp/target/debug/mctier".to_string()]);
+
+        assert_eq!(
+            app_bundle_root(Path::new("/Applications/MCTier.app/Contents/MacOS/MCTier")),
+            Some(PathBuf::from("/Applications/MCTier.app"))
+        );
+        assert_eq!(app_bundle_root(Path::new("/usr/local/bin/mctier")), None);
     }
 
     /// 数值按 NSProcessInfo.h 抄写：(1 << 21) | (1 << 22)。

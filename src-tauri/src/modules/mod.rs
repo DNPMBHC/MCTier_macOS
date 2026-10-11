@@ -33,6 +33,9 @@ pub mod privileged_helper;
 // macOS：utun 必须由 root 创建，EasyTier 通过系统授权窗口提权运行
 #[cfg(target_os = "macos")]
 pub mod macos_privilege;
+// macOS：常驻特权守护进程（一次授权、运行期复用，不再每次大厅弹密码）
+#[cfg(target_os = "macos")]
+pub mod macos_privileged_daemon;
 pub mod voice_service;
 #[cfg(windows)]
 pub mod windows_paths;
@@ -97,5 +100,13 @@ pub mod linux_platform;
 // macOS 平台支撑（网卡检测 / LaunchAgent 自启动）
 #[cfg(target_os = "macos")]
 pub mod macos_platform;
+
+// macOS 应用菜单栏（关于 / 设置 / 编辑 / 窗口 / 帮助）。文案组装可在非 macOS
+// 上编译测试，真正装到 AppKit 的函数只在 macOS 生效。
+pub mod macos_menu;
+
+// macOS 防休眠断言（录制/通话期间阻止系统休眠，区别于 App Nap 豁免）。
+#[cfg(target_os = "macos")]
+pub mod macos_power;
 
 pub mod screen_recording;

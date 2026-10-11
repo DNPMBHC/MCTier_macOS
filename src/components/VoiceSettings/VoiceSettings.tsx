@@ -190,6 +190,11 @@ export const VoiceDevicePanel: React.FC<VoiceDevicePanelProps> = ({ active = tru
     } catch (e) {
       if (generation !== testGeneration.current) return;
       stopMicTest();
+      // 系统未授权麦克风时弹出授权引导（与开麦同一套流程），而不是只报一句错。
+      if (e instanceof DOMException && (e.name === 'NotAllowedError' || e.name === 'PermissionDeniedError')) {
+        window.dispatchEvent(new CustomEvent('mctier-microphone-permission-required'));
+        return;
+      }
       message.error(`${tl('无法打开麦克风试音', 'Unable to start microphone test')}：${e}`);
     }
   };

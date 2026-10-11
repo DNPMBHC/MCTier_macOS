@@ -13,7 +13,7 @@ use tokio::sync::Mutex;
 use tokio::time::{sleep, Duration};
 
 #[cfg(target_os = "macos")]
-use crate::modules::macos_privilege;
+use crate::modules::macos_privileged_daemon;
 #[cfg(windows)]
 use crate::modules::privileged_helper::{self, HelperEvent, HelperSession};
 
@@ -98,14 +98,15 @@ impl Default for NetworkConfig {
 ///
 /// 负责管理 EasyTier 子进程，提供虚拟网络连接功能
 pub struct NetworkService {
-    /// EasyTier 子进程
+    /// EasyTier 子进程（Windows/Linux 本地派生；macOS 走守护进程，不用此字段）
+    #[cfg_attr(target_os = "macos", allow(dead_code))]
     easytier_process: Arc<Mutex<Option<Child>>>,
     /// Windows 上由窄权限 helper 管理的 EasyTier 会话
     #[cfg(windows)]
     helper_session: Arc<Mutex<Option<HelperSession>>>,
-    /// macOS 上由系统授权窗口以 root 运行的 EasyTier 会话（停止哨兵与运行目录）
+    /// macOS 常驻守护进程模式下当前活动会话的 tag（用于向守护进程发停止指令）
     #[cfg(target_os = "macos")]
-    macos_session: Arc<Mutex<Option<macos_privilege::ElevatedSession>>>,
+    macos_daemon_tag: Arc<Mutex<Option<String>>>,
     /// 网络配置
     config: NetworkConfig,
     /// 当前连接状态
@@ -154,7 +155,7 @@ impl NetworkService {
             #[cfg(windows)]
             helper_session: Arc::new(Mutex::new(None)),
             #[cfg(target_os = "macos")]
-            macos_session: Arc::new(Mutex::new(None)),
+            macos_daemon_tag: Arc::new(Mutex::new(None)),
             config,
             status: Arc::new(Mutex::new(ConnectionStatus::Disconnected)),
             virtual_ip: Arc::new(Mutex::new(None)),
@@ -1054,28 +1055,35 @@ impl NetworkService {
             });
         }
 
-        // macOS：utun 接口只能由 root 创建，必须通过系统授权窗口提权运行 EasyTier。
-        // 提权细节（FIFO 转发输出、停止哨兵、防孤儿进程）见 modules::macos_privilege。
+        // macOS：utun 接口只能由 root 创建。改用常驻特权守护进程——第一次授权后，
+        // 整个 app 运行期复用同一个 root 守护进程启停 EasyTier，不再每次大厅弹密码。
+        // 安全模型（固定可执行文件 + 参数白名单 + 一次性 token）见 modules::macos_privileged_daemon。
         #[cfg(target_os = "macos")]
         {
-            let launch = macos_privilege::start_elevated(
+            // 确保守护进程在运行（首次会弹一次授权；之后幂等直接返回）。
+            macos_privileged_daemon::ensure_daemon(&easytier_path)
+                .await
+                .map_err(|e| {
+                    log::error!("启动 macOS 特权守护进程失败: {}", e);
+                    AppError::ProcessError(e)
+                })?;
+
+            let session = macos_privileged_daemon::start_session(
                 &easytier_path,
                 &cmd_args,
-                working_dir,
                 &instance_name,
             )
             .await
             .map_err(|e| {
-                log::error!("启动 macOS 特权 EasyTier 失败: {}", e);
+                log::error!("通过守护进程启动 EasyTier 失败: {}", e);
                 AppError::ProcessError(e)
             })?;
 
-            *self.macos_session.lock().await = Some(launch.session);
-            *self.easytier_process.lock().await = Some(launch.process);
+            *self.macos_daemon_tag.lock().await = Some(session.tag.clone());
             *self.is_running.lock().await = true;
             *self.instance_config_dir.lock().await = Some(config_dir.clone());
 
-            log::info!("EasyTier 进程已启动（macOS 管理员授权），等待获取虚拟 IP...");
+            log::info!("EasyTier 进程已启动（macOS 常驻守护进程），等待获取虚拟 IP...");
 
             let virtual_ip_clone = Arc::clone(&self.virtual_ip);
             let status_clone = Arc::clone(&self.status);
@@ -1083,7 +1091,7 @@ impl NetworkService {
             let stderr_buf_stdout = Arc::clone(&self.last_stderr);
             tokio::spawn(async move {
                 Self::monitor_stdout(
-                    launch.stdout,
+                    session.stdout,
                     virtual_ip_clone,
                     status_clone,
                     is_running_stdout,
@@ -1092,51 +1100,37 @@ impl NetworkService {
                 .await;
             });
 
-            // easytier-core 自身的 stderr（经 FIFO 转发）
+            // easytier-core 的 stderr（经 FIFO 转发）。守护进程模式下没有可 try_wait 的
+            // 子进程句柄，改用 stderr FIFO 的 EOF 作为「进程已退出」信号：easytier 退出后
+            // 写端关闭，这个 monitor 读到 EOF 返回，随即把状态收敛为断开/错误。
             let is_running_clone = Arc::clone(&self.is_running);
             let status_clone2 = Arc::clone(&self.status);
+            let virtual_ip_clone2 = Arc::clone(&self.virtual_ip);
             let stderr_buf_clone = Arc::clone(&self.last_stderr);
             tokio::spawn(async move {
                 Self::monitor_stderr(
-                    launch.stderr,
-                    is_running_clone,
-                    status_clone2,
-                    stderr_buf_clone,
+                    session.stderr,
+                    Arc::clone(&is_running_clone),
+                    Arc::clone(&status_clone2),
+                    Arc::clone(&stderr_buf_clone),
                 )
                 .await;
-            });
-
-            // osascript 自身的 stderr 走同一条监控链路：用户取消授权时
-            // describe_exit_failure 依据这里缓存的 "User canceled." 给出可读提示。
-            if let Some(launcher_stderr) = launch.launcher_stderr {
-                let is_running_clone = Arc::clone(&self.is_running);
-                let status_clone2 = Arc::clone(&self.status);
-                let stderr_buf_clone = Arc::clone(&self.last_stderr);
-                tokio::spawn(async move {
-                    Self::monitor_stderr(
-                        launcher_stderr,
-                        is_running_clone,
-                        status_clone2,
-                        stderr_buf_clone,
-                    )
-                    .await;
-                });
-            }
-
-            let process_clone = Arc::clone(&self.easytier_process);
-            let status_clone = Arc::clone(&self.status);
-            let is_running_clone = Arc::clone(&self.is_running);
-            let virtual_ip_clone = Arc::clone(&self.virtual_ip);
-            let stderr_buf_clone2 = Arc::clone(&self.last_stderr);
-            tokio::spawn(async move {
-                Self::monitor_process(
-                    process_clone,
-                    status_clone,
-                    is_running_clone,
-                    virtual_ip_clone,
-                    stderr_buf_clone2,
-                )
-                .await;
+                // stderr EOF = easytier 已退出。收敛状态，避免 UI 卡在「连接中」。
+                let was_connected =
+                    matches!(&*status_clone2.lock().await, ConnectionStatus::Connected(_));
+                let already_error =
+                    matches!(&*status_clone2.lock().await, ConnectionStatus::Error(_));
+                if was_connected {
+                    *status_clone2.lock().await = ConnectionStatus::Disconnected;
+                } else if !already_error {
+                    let recent: Vec<String> =
+                        stderr_buf_clone.lock().await.iter().cloned().collect();
+                    let msg = Self::describe_exit_failure(None, &recent);
+                    *status_clone2.lock().await = ConnectionStatus::Error(msg);
+                }
+                *is_running_clone.lock().await = false;
+                *virtual_ip_clone2.lock().await = None;
+                log::debug!("macOS 守护进程会话 stderr EOF：EasyTier 已退出");
             });
         }
 
@@ -1838,6 +1832,7 @@ impl NetworkService {
     }
 
     /// 监控进程状态
+    #[cfg_attr(target_os = "macos", allow(dead_code))]
     async fn monitor_process(
         process: Arc<Mutex<Option<Child>>>,
         status: Arc<Mutex<ConnectionStatus>>,
@@ -2016,49 +2011,23 @@ impl NetworkService {
             }
         };
 
-        // macOS：EasyTier 由 root 监管脚本持有，直接 kill osascript 只会杀掉授权进程，
-        // 留下 root 权限的孤儿 easytier-core。必须先写停止哨兵，让 root 侧自己终止子进程，
-        // 再等 osascript 退出后清理运行目录。
+        // macOS：EasyTier 由常驻 root 守护进程持有。停止时给守护进程发 stop 指令让它
+        // 自己终止对应 easytier-core 子进程——守护进程本身保持常驻，下次开大厅不再弹密码。
         #[cfg(target_os = "macos")]
         let graceful_shutdown_success = {
-            let session = self.macos_session.lock().await.take();
-            let mut process_guard = self.easytier_process.lock().await;
-            let mut success = false;
-
-            if let Some(session) = session {
-                macos_privilege::mark_stop(&session);
-
-                if let Some(child) = process_guard.as_mut() {
-                    log::info!("🔄 [StopEasyTier] 正在等待 macOS 特权 EasyTier 退出（最多8秒）...");
-                    match tokio::time::timeout(Duration::from_secs(8), child.wait()).await {
-                        Ok(Ok(status)) => {
-                            log::info!(
-                                "✅ [StopEasyTier] EasyTier 进程已退出，状态码: {:?}",
-                                status
-                            );
-                            success = true;
-                        }
-                        Ok(Err(e)) => log::warn!("⚠️ [StopEasyTier] 等待进程退出时出错: {}", e),
-                        Err(_) => log::warn!("⚠️ [StopEasyTier] 等待进程退出超时（8秒）"),
-                    }
-
-                    if !success {
-                        // 监管脚本仍会因停止哨兵退出，这里只兜底回收 osascript。
-                        let _ = child.kill().await;
-                    }
-                } else {
-                    log::info!("ℹ️ [StopEasyTier] EasyTier 进程已不在运行");
-                    success = true;
+            let tag = self.macos_daemon_tag.lock().await.take();
+            if let Some(tag) = tag {
+                log::info!("🔄 [StopEasyTier] 请求守护进程停止会话 tag={}", tag);
+                if let Err(e) = macos_privileged_daemon::stop_session(&tag).await {
+                    log::warn!("⚠️ [StopEasyTier] 向守护进程发送停止指令失败: {}", e);
                 }
-
-                *process_guard = None;
-                macos_privilege::cleanup(&session);
             } else {
                 log::info!("ℹ️ [StopEasyTier] EasyTier 服务未运行，无需关闭");
-                success = true;
             }
-
-            success
+            // 守护进程收到 stop 后异步终止子进程，这里不持有子进程句柄，直接视为成功；
+            // stderr FIFO 的 EOF monitor 会把运行状态收敛为断开。
+            *self.is_running.lock().await = false;
+            true
         };
 
         #[cfg(target_os = "linux")]

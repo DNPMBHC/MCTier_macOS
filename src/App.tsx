@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { ConfigProvider, theme, App as AntdApp, Button, Modal } from 'antd';
+import { ConfigProvider, theme, App as AntdApp, Button, Modal, message } from 'antd';
 import { FeedbackHost } from './components/FeedbackHost/FeedbackHost';
 import zhCN from 'antd/locale/zh_CN';
 import enUS from 'antd/locale/en_US';
@@ -183,6 +183,32 @@ function MainWindowApp() {
     return () => window.removeEventListener('mctier-microphone-permission-required', showHelp);
   }, []);
 
+  // 全局快捷键注册失败（键位被系统或其它软件占用）时给出明确提示。否则用户在设置里
+  // 改了键却按下无效，根本不知道是被占用了。macOS 常见于 Ctrl+ 组合被系统服务占用。
+  useEffect(() => {
+    type HotkeyFailure = { action: string; hotkey: string; error: string };
+    const actionLabel: Record<string, string> = {
+      mic: tl('麦克风开关', 'Toggle Microphone'),
+      global_mute: tl('全局听筒', 'Toggle Speaker'),
+      push_to_talk: tl('临时开麦', 'Push to Talk'),
+      summon: tl('唤出窗口', 'Summon Window'),
+    };
+    let unlisten: (() => void) | undefined;
+    void listen<HotkeyFailure[]>('hotkey-registration-failed', (event) => {
+      const failures = event.payload || [];
+      for (const f of failures) {
+        const label = actionLabel[f.action] ?? f.action;
+        message.warning(
+          tl(
+            `快捷键「${label}」(${f.hotkey}) 注册失败，可能已被系统或其它软件占用，请在设置中换一个键位`,
+            `Hotkey for "${label}" (${f.hotkey}) failed to register — it may be taken by the system or another app. Pick another in Settings.`
+          )
+        );
+      }
+    }).then((off) => { unlisten = off; });
+    return () => { if (unlisten) unlisten(); };
+  }, []);
+
   // 同步系统托盘菜单文本到当前界面语言（启动时 + 语言切换时）
   useEffect(() => {
     const syncTray = async () => {
@@ -277,6 +303,50 @@ function MainWindowApp() {
       if (unlisten) unlisten();
     };
   }, []);
+
+  // macOS 应用菜单栏事件：后端把菜单点击转成 Tauri 事件，这里再转成 window
+  // 事件交给 MainWindow 打开对应浮层；配置变更（菜单里勾选）则刷新前端配置。
+  useEffect(() => {
+    const unlisteners: Array<() => void> = [];
+    const setup = async () => {
+      unlisteners.push(
+        await listen('menu-open-settings', () => {
+          window.dispatchEvent(new CustomEvent('mctier-menu-settings'));
+        })
+      );
+      unlisteners.push(
+        await listen('menu-open-about', () => {
+          window.dispatchEvent(new CustomEvent('mctier-menu-about'));
+        })
+      );
+      unlisteners.push(
+        await listen('menu-config-changed', async () => {
+          try {
+            const userConfig = await invoke<UserConfig>('get_config');
+            useAppStore.getState().updateConfig(userConfig);
+          } catch (error) {
+            console.warn('菜单变更后刷新配置失败:', error);
+          }
+        })
+      );
+    };
+    void setup();
+    return () => {
+      unlisteners.forEach((off) => off());
+    };
+  }, []);
+
+  // macOS Dock 角标：按未读会话数更新 Dock 图标角标，隐藏到菜单栏时也能看到新消息。
+  // 其它平台的命令是空操作，这里按平台跳过以免无谓的 IPC。
+  const unreadConversationCount = useAppStore(
+    (state) => Object.keys(state.unreadChatMessages).length
+  );
+  useEffect(() => {
+    if (!isMacOSPlatform) return;
+    void invoke('set_dock_badge', { count: unreadConversationCount }).catch((error) => {
+      console.warn('更新 Dock 角标失败:', error);
+    });
+  }, [unreadConversationCount]);
 
   // 全局禁用右键菜单
   useEffect(() => {

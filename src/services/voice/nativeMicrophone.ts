@@ -31,7 +31,10 @@ export function nativeMicrophoneSupported(): Promise<boolean> {
   });
 }
 export async function microphoneDevices(): Promise<MicrophoneDevice[]> {
-  if (await nativeMicrophoneSupported()) return invoke<MicrophoneDevice[]>('native_microphone_devices');
+  // macOS 走 getUserMedia 采集，设备也用浏览器枚举，保证选择器里的 id 能被 getUserMedia 认。
+  if (!isMacOSPlatform && (await nativeMicrophoneSupported())) {
+    return invoke<MicrophoneDevice[]>('native_microphone_devices');
+  }
   return (await navigator.mediaDevices.enumerateDevices()).filter(device => device.kind === 'audioinput');
 }
 
@@ -44,6 +47,16 @@ function openBrowserMicrophone(deviceId: string, systemProcessing: boolean): Pro
 }
 
 export async function openMicrophone(deviceId = '', systemProcessing = true, loopback = false, recording = false): Promise<MediaStream> {
+  // macOS：麦克风采集直接走 WKWebView 的 getUserMedia，不碰原生 CoreAudio 单元。
+  // 未签名/ad-hoc 打包版里，原生 AUHAL 输入单元即使授权状态为 Authorized，coreaudiod
+  // 也不认这个 TCC 授权、输入回调永不触发（日志实测 total_frames=0），采集必然静音；
+  // 而且每次还白等 3 秒超时。WKWebView 的 getUserMedia 走 Apple 自己的媒体栈，TCC
+  // 由系统正确处理，是打包版唯一可靠的麦克风路径。原生单元本来就是为 Windows 绕开
+  // WebView2 而存在，macOS 没有这个必要。
+  // 系统声音(loopback)例外：那条走 ScreenCaptureKit，没有浏览器等价实现，仍用原生。
+  if (isMacOSPlatform && !loopback) {
+    return openBrowserMicrophone(deviceId.startsWith('coreaudio:') ? '' : deviceId, systemProcessing);
+  }
   if (!(await nativeMicrophoneSupported())) {
     if (loopback) {
       throw new Error(isMacOSPlatform
@@ -56,12 +69,10 @@ export async function openMicrophone(deviceId = '', systemProcessing = true, loo
     return await openNativeMicrophone(deviceId, systemProcessing, loopback, recording);
   } catch (error) {
     // Windows 绝不回退到浏览器采集：绕开 WebView2 的麦克风链路正是原生采集存在的理由。
-    // macOS 保留浏览器这条路——原生单元打不开（未授权、设备被占用）时用户至少还有
-    // 麦可用，而不是整个语音功能直接失效。系统声音只能走原生，失败就如实报错。
     if (!isMacOSPlatform || loopback) throw error;
+    if (error instanceof DOMException && error.name === 'NotAllowedError') throw error;
     diagnostic('capture-error', `native capture failed, falling back to browser: ${String(error)}`);
     console.warn('原生麦克风不可用，回退到浏览器采集:', error);
-    // 设备 id 是 coreaudio: 前缀的 UID，浏览器不认识，回退时只能用系统默认设备。
     return openBrowserMicrophone('', systemProcessing);
   }
 }
@@ -70,6 +81,7 @@ async function openNativeMicrophone(deviceId: string, systemProcessing: boolean,
   const info = await invoke<{ id: string; deviceId: string; sampleRate: number }>(loopback ? 'recording_system_audio_start' : 'native_microphone_start', { deviceId, systemProcessing, recording }).catch(error => {
     diagnostic('capture-error', String(error));
     if (String(error).startsWith('MIC_NOT_FOUND:')) throw new DOMException(String(error).slice(14), 'NotFoundError');
+    if (String(error).startsWith('MIC_PERMISSION_DENIED:')) throw new DOMException(String(error).slice(22), 'NotAllowedError');
     throw new Error(String(error));
   });
   let context: AudioContext | undefined;

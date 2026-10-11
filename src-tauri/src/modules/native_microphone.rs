@@ -137,6 +137,23 @@ pub async fn native_microphone_devices(window: WebviewWindow) -> Result<Vec<Inpu
     #[cfg(not(any(windows, target_os = "macos")))]
     Err("Native microphone requires Windows or macOS".into())
 }
+
+/// 不经过 Tauri 命令、不需要窗口句柄的输入设备枚举，供 `voice_service` 复用，
+/// 让后端的设备认知与前端选择器看到的是同一份真实列表（而非写死的占位设备）。
+/// 平台不支持或枚举失败时返回空列表，由调用方决定如何回退。
+pub fn input_devices() -> Vec<InputDevice> {
+    #[cfg(any(windows, target_os = "macos"))]
+    {
+        platform::devices().unwrap_or_else(|error| {
+            log::warn!("原生输入设备枚举失败: {error}");
+            Vec::new()
+        })
+    }
+    #[cfg(not(any(windows, target_os = "macos")))]
+    {
+        Vec::new()
+    }
+}
 #[tauri::command]
 pub async fn native_microphone_start(
     window: WebviewWindow,
@@ -153,6 +170,16 @@ pub async fn recording_system_audio_start(window: WebviewWindow) -> Result<Captu
     start_source(String::new(), false, true, true).await
 }
 async fn start_source(device_id: String, system_processing: bool, loopback: bool, recording: bool) -> Result<Capture, String> {
+    // macOS：麦克风采集必须先拿到 TCC 授权，否则原生单元只吐静音、还不弹窗。
+    // 系统声音(loopback)走屏幕录制授权，不在这里处理。请求弹窗会阻塞，放到
+    // 阻塞线程池里，避免占住 async 执行器。
+    #[cfg(target_os = "macos")]
+    if !loopback {
+        let permission = tokio::task::spawn_blocking(mic_permission::ensure_authorized)
+            .await
+            .map_err(|e| format!("麦克风授权检查失败: {e}"))?;
+        permission?;
+    }
     #[cfg(any(windows, target_os = "macos"))]
     {
         let id = uuid::Uuid::new_v4().to_string();
@@ -273,6 +300,12 @@ mod platform;
 #[cfg(target_os = "macos")]
 #[path = "native_microphone/macos.rs"]
 mod platform;
+
+/// 麦克风 TCC 授权（AVCaptureDevice）。原生输入单元不会自己弹授权框，必须先在这里
+/// 查询/请求权限，否则采集“成功”却只有静音。
+#[cfg(target_os = "macos")]
+#[path = "native_microphone/mic_permission.rs"]
+pub mod mic_permission;
 
 /// 系统声音采集（ScreenCaptureKit，macOS 13+）：对应 Windows 的 WASAPI loopback，
 /// 由 macOS 的 platform::run_recording 在 loopback 时调用。

@@ -209,12 +209,11 @@ pub async fn cancel_lobby_connecting() -> Result<(), String> {
         }
     }
 
-    // macOS：easytier-core 现在以 root 运行，用户态 pkill 杀不掉它，而且全局
-    // pkill -f 会波及用户自己的其它 EasyTier 实例。改由 root 监管脚本读取的
-    // 停止哨兵来终止，同样不需要 network_service 锁。
+    // macOS：easytier-core 由常驻 root 守护进程持有，用户态 pkill 杀不掉它。
+    // 改为请求守护进程停止所有活动会话——不需要 network_service 锁，守护进程保持常驻。
     #[cfg(target_os = "macos")]
     {
-        crate::modules::macos_privilege::request_stop_for_all_sessions();
+        crate::modules::macos_privileged_daemon::stop_all_sessions().await;
     }
 
     #[cfg(target_os = "linux")]

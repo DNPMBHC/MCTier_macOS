@@ -20,6 +20,51 @@ static TRAY_NOTIFICATION_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 static RESTORE_ALWAYS_ON_TOP_AFTER_TRAY: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
 
+/// 优雅退出进行中标志。
+///
+/// macOS 的 `Cmd+Q`、系统关机、`app.exit()` 都会发 `RunEvent::ExitRequested`。
+/// 我们要在真正退出前跑一次网络/录制清理（否则会留下 root 权限的孤儿 easytier-core
+/// 或没落盘的录像），但清理结束后自己调用的 `app.exit(0)` 会再发一次事件——
+/// 用这个标志区分「首次用户请求」与「清理完成后的自我退出」，避免无限循环。
+static SHUTDOWN_IN_PROGRESS: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+/// 优雅退出：先停录制/采集与网络会话，再真正退出进程。
+///
+/// 托盘「退出」与其它主动退出入口共用它，确保不会出现「直接 exit() 把 root
+/// 权限的 easytier-core 丢成孤儿、或录像没落盘」的情况。幂等：清理期间重复点击
+/// 不会叠加多次关闭流程。
+fn graceful_exit(app: &tauri::AppHandle) {
+    use tauri::Manager;
+    // 录制未结束时先让前端收尾录像；它会在落盘后触发退出。
+    if crate::modules::screen_recording::finish_before_exit(app) {
+        return;
+    }
+    if SHUTDOWN_IN_PROGRESS.swap(true, std::sync::atomic::Ordering::AcqRel) {
+        return;
+    }
+    let ah = app.clone();
+    if let Some(state) = ah.try_state::<AppState>() {
+        let core = Arc::clone(&state.core);
+        tauri::async_runtime::spawn(async move {
+            if let Err(error) = core.lock().await.shutdown().await {
+                error!("退出前清理失败: {error}");
+            }
+            crate::modules::native_capture::stop_all();
+            crate::modules::native_microphone::stop_all();
+            // macOS：关闭常驻特权守护进程（终止其所有 root 子进程），不留孤儿。
+            #[cfg(target_os = "macos")]
+            crate::modules::macos_privileged_daemon::shutdown_daemon().await;
+            info!("清理完成，正式退出 MCTier");
+            ah.exit(0);
+        });
+    } else {
+        crate::modules::native_capture::stop_all();
+        crate::modules::native_microphone::stop_all();
+        ah.exit(0);
+    }
+}
+
 /// 在应用启动时应用 GPU 设置
 fn apply_gpu_settings_on_startup() {
     // 尝试加载配置文件
@@ -33,30 +78,49 @@ fn apply_gpu_settings_on_startup() {
     }
 
     // 读取配置文件
-    if let Ok(content) = std::fs::read_to_string(&config_path) {
-        if let Ok(config) = serde_json::from_str::<serde_json::Value>(&content) {
-            // 检查 GPU 渲染设置（配置文件使用 snake_case）
-            let enable_gpu = config
-                .get("enable_gpu_rendering")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(true);
-
-            if !enable_gpu {
-                // 设置环境变量完全禁用 GPU（包括GPU进程）
-                std::env::set_var("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS", 
-                    "--disable-gpu --disable-software-rasterizer --disable-gpu-compositing --disable-gpu-process-crash-limit --in-process-gpu");
-                println!("✅ GPU 渲染已完全禁用（包括GPU进程）");
-            } else {
-                // 启用 GPU 时，明确设置启用硬件加速的参数
-                std::env::set_var(
-                    "WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS",
-                    "--enable-gpu-rasterization --enable-zero-copy --ignore-gpu-blocklist",
-                );
-                println!("✅ GPU 渲染已启用（通过环境变量）");
-            }
-        }
-    } else {
+    let Ok(content) = std::fs::read_to_string(&config_path) else {
         println!("无法读取配置文件，使用默认GPU设置（启用）");
+        return;
+    };
+    let Ok(config) = serde_json::from_str::<serde_json::Value>(&content) else {
+        return;
+    };
+    // 检查 GPU 渲染设置（配置文件使用 snake_case）
+    let enable_gpu = config
+        .get("enable_gpu_rendering")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(true);
+
+    // `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS` 只对 Windows 的 WebView2 生效。
+    // macOS 用的是 WKWebView、Linux 用 WebKitGTK，这个环境变量对它们是**完全空操作**——
+    // 以前无条件设置它，让用户以为“关掉 GPU 渲染”在 Mac 上有效，实际毫无作用，
+    // 徒增困惑。这里按平台编译：只在 Windows 下写该变量。
+    #[cfg(target_os = "windows")]
+    {
+        if !enable_gpu {
+            std::env::set_var(
+                "WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS",
+                "--disable-gpu --disable-software-rasterizer --disable-gpu-compositing --disable-gpu-process-crash-limit --in-process-gpu",
+            );
+            println!("✅ GPU 渲染已完全禁用（包括GPU进程）");
+        } else {
+            std::env::set_var(
+                "WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS",
+                "--enable-gpu-rasterization --enable-zero-copy --ignore-gpu-blocklist",
+            );
+            println!("✅ GPU 渲染已启用（通过环境变量）");
+        }
+    }
+    // 非 Windows：环境变量无效。GPU 由系统 WebView 自行管理，这里只按配置切换前端的
+    // 装饰性动画/光晕（前端读取同一份 enable_gpu_rendering，给 body 挂 class），
+    // 真正影响 Mac 卡顿的是那些 CSS 效果而非浏览器 GPU 开关。
+    #[cfg(not(target_os = "windows"))]
+    {
+        if enable_gpu {
+            println!("ℹ️ 非 Windows 平台：GPU 由系统 WebView 管理，仅按配置切换前端装饰动画");
+        } else {
+            println!("ℹ️ 已按配置关闭前端装饰动画（非 Windows 平台不改系统 WebView GPU）");
+        }
     }
 }
 
@@ -157,6 +221,117 @@ fn ensure_window_visible(window: &tauri::Window) {
         log::warn!("检测到窗口移出可视范围，自动居中找回");
         let _ = window.center();
     }
+}
+
+/// 处理应用菜单（目前仅 macOS 安装）的自定义菜单项。
+///
+/// 预置项（撤销/剪切/隐藏/缩放/退出等）由 AppKit 直接执行，不会进入这里；
+/// 这里只分派我们自定义的那几项：
+/// - 设置 / 关于：交给前端打开对应浮层（设置是 WebView 内面板而非独立窗口）；
+/// - 关闭时隐藏到菜单栏 / 开机启动：直接改配置并保持菜单勾选、设置页同步；
+/// - 官网 / 日志：复用既有命令，避免再写一套打开逻辑。
+fn handle_app_menu_event(app: &tauri::AppHandle, id: &str) {
+    use tauri::Emitter;
+    match id {
+        crate::modules::macos_menu::ID_SETTINGS => {
+            restore_main_window(app);
+            let _ = app.emit("menu-open-settings", ());
+        }
+        crate::modules::macos_menu::ID_ABOUT => {
+            restore_main_window(app);
+            let _ = app.emit("menu-open-about", ());
+        }
+        crate::modules::macos_menu::ID_CLOSE_TO_MENU_BAR => {
+            toggle_close_to_tray_from_menu(app);
+        }
+        crate::modules::macos_menu::ID_AUTO_START => {
+            toggle_auto_start_from_menu(app);
+        }
+        "app-help-website" => {
+            // 官网域名与关于页一致；直接走系统默认浏览器。
+            #[cfg(target_os = "macos")]
+            {
+                let _ = app;
+                let _ = std::process::Command::new("/usr/bin/open")
+                    .arg("https://mctier.pmhs.top")
+                    .spawn();
+            }
+        }
+        "app-help-logs" => {
+            tauri::async_runtime::spawn(async move {
+                if let Err(error) = crate::modules::tauri_commands::open_log_folder().await {
+                    log::warn!("从菜单打开日志文件夹失败: {error}");
+                }
+            });
+        }
+        _ => {}
+    }
+}
+
+/// 菜单里切换「关闭时隐藏到菜单栏」：改配置 → 回写菜单勾选 → 通知前端刷新设置页。
+fn toggle_close_to_tray_from_menu(app: &tauri::AppHandle) {
+    use tauri::Emitter;
+    let Some(state) = app.try_state::<AppState>() else {
+        return;
+    };
+    let core = Arc::clone(&state.core);
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        let new_value = {
+            let cl = core.lock().await;
+            let cfg_mgr = cl.get_config_manager();
+            let mut mgr = cfg_mgr.lock().await;
+            let current = {
+                use crate::modules::config_manager::default_close_to_tray;
+                mgr.get_config()
+                    .close_to_tray
+                    .unwrap_or_else(default_close_to_tray)
+            };
+            let next = !current;
+            if let Err(error) = mgr.set_close_to_tray(next).await {
+                error!("菜单切换关闭到托盘失败: {error}");
+                return;
+            }
+            next
+        };
+        crate::modules::macos_menu::set_close_to_menu_bar_checked(new_value);
+        let _ = app.emit("menu-config-changed", ());
+    });
+}
+
+/// 菜单里切换「开机启动」：改配置 + 调用平台自启实现 → 回写菜单勾选 → 通知前端。
+fn toggle_auto_start_from_menu(app: &tauri::AppHandle) {
+    use tauri::Emitter;
+    let Some(state) = app.try_state::<AppState>() else {
+        return;
+    };
+    let core = Arc::clone(&state.core);
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        let new_value = {
+            let cl = core.lock().await;
+            let cfg_mgr = cl.get_config_manager();
+            let mut mgr = cfg_mgr.lock().await;
+            let current = mgr.get_config().auto_startup.unwrap_or(false);
+            let next = !current;
+            // 先落实平台自启（写 LaunchAgent），失败则不改配置，保持两者一致。
+            #[cfg(target_os = "macos")]
+            if let Err(error) = crate::modules::macos_platform::set_auto_start(next) {
+                error!("菜单切换开机自启失败: {error}");
+                return;
+            }
+            if let Err(error) = mgr
+                .update_config(|config| config.auto_startup = Some(next))
+                .await
+            {
+                error!("菜单切换开机自启写配置失败: {error}");
+                return;
+            }
+            next
+        };
+        crate::modules::macos_menu::set_auto_start_checked(new_value);
+        let _ = app.emit("menu-config-changed", ());
+    });
 }
 
 /// 健壮地将主窗口唤回到前台。
@@ -823,11 +998,27 @@ fn normalize_hotkey(raw: &str) -> String {
 ///
 /// 可重复调用：内部会先注销此前注册的全部快捷键，因此用户在设置中改完键位后
 /// 无需重启应用即可立即生效。任一快捷键注册失败只记录日志，不影响其它快捷键。
+/// 一条快捷键注册失败的描述，回传给前端提示用户。
+#[derive(Clone, serde::Serialize)]
+pub struct HotkeyRegistrationFailure {
+    /// 功能名（麦克风开关 / 全局听筒 / 临时开麦 / 唤出窗口），已本地化由前端决定。
+    pub action: String,
+    /// 规范化后的键位字符串。
+    pub hotkey: String,
+    /// 失败原因（通常是键位被系统占用或格式不被支持）。
+    pub error: String,
+}
+
+/// 注册（或重新注册）全部全局快捷键。
+///
+/// 返回注册失败的条目：以前失败只写日志，用户在设置里改了一个被系统占用的键会
+/// 看到"已保存"却毫无作用，无从排查。现在把失败逐条交回调用方提示。
 fn register_global_hotkeys(
     app: &tauri::AppHandle,
     core: Arc<Mutex<modules::app_core::AppCore>>,
     bindings: &HotkeyBindings,
-) {
+) -> Vec<HotkeyRegistrationFailure> {
+    let mut failures: Vec<HotkeyRegistrationFailure> = Vec::new();
     // 先清空旧注册，实现"改完即生效"
     if let Err(e) = app.global_shortcut().unregister_all() {
         log::warn!("注销旧全局快捷键失败（忽略）: {}", e);
@@ -870,6 +1061,11 @@ fn register_global_hotkeys(
                 })
         {
             error!("唤出窗口快捷键 {} 注册失败: {}", summon_hotkey, e);
+            failures.push(HotkeyRegistrationFailure {
+                action: "summon".to_string(),
+                hotkey: summon_hotkey.clone(),
+                error: e.to_string(),
+            });
         }
     }
 
@@ -917,6 +1113,11 @@ fn register_global_hotkeys(
             })
         {
             error!("麦克风快捷键 {} 注册失败: {}", mic_hotkey, e);
+            failures.push(HotkeyRegistrationFailure {
+                action: "mic".to_string(),
+                hotkey: mic_hotkey.clone(),
+                error: e.to_string(),
+            });
         }
     }
 
@@ -959,6 +1160,11 @@ fn register_global_hotkeys(
                 })
         {
             error!("全局听筒快捷键 {} 注册失败: {}", global_mute_hotkey, e);
+            failures.push(HotkeyRegistrationFailure {
+                action: "global_mute".to_string(),
+                hotkey: global_mute_hotkey.clone(),
+                error: e.to_string(),
+            });
         }
     }
 
@@ -1028,8 +1234,15 @@ fn register_global_hotkeys(
                 })
         {
             error!("临时开麦快捷键 {} 注册失败: {}", push_to_talk_hotkey, e);
+            failures.push(HotkeyRegistrationFailure {
+                action: "push_to_talk".to_string(),
+                hotkey: push_to_talk_hotkey.clone(),
+                error: e.to_string(),
+            });
         }
     }
+
+    failures
 }
 
 /// 应用最新的快捷键设置（供前端在设置中改完键位后调用，立即生效、无需重启）
@@ -1052,7 +1265,14 @@ async fn apply_hotkeys(
             summon: cfg.summon_hotkey.clone().unwrap_or(d.summon),
         }
     };
-    register_global_hotkeys(&app, core, &bindings);
+    let failures = register_global_hotkeys(&app, core, &bindings);
+    // 把注册失败逐条推给前端：被系统占用的键位会导致“设置里显示已保存、按下却无效”，
+    // 以前只写日志，用户无从得知。前端据此弹提示并引导换一个键位。
+    if !failures.is_empty() {
+        if let Err(error) = app.emit("hotkey-registration-failed", &failures) {
+            log::warn!("推送快捷键注册失败事件出错: {error}");
+        }
+    }
     Ok(())
 }
 
@@ -1137,6 +1357,11 @@ pub fn run() {
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_clipboard_manager::init())
         .manage(app_state)
+        .on_menu_event(|app, event| {
+            // 应用菜单（目前仅 macOS 装）产生的事件。自定义项按 ID 分派；
+            // 预置项（撤销/剪切/隐藏/退出等）由系统直接处理，不会走到这里。
+            handle_app_menu_event(app, event.id().as_ref());
+        })
         .invoke_handler(command_registry::handler())
         .on_page_load(|webview, payload| {
             if webview.label() == "main" && matches!(payload.event(), tauri::webview::PageLoadEvent::Started) {
@@ -1180,14 +1405,19 @@ pub fn run() {
                     .separator()
                     .item(&exit_item)
                     .build()?;
-                TrayIconBuilder::with_id("main-tray")
+                let tray_builder = TrayIconBuilder::with_id("main-tray")
                     .tooltip("MCTier")
-                    .icon(app.default_window_icon().cloned().unwrap())
+                    .icon(app.default_window_icon().cloned().unwrap());
+                // macOS 菜单栏图标按 template image 渲染：系统据此在深浅色菜单栏里
+                // 自动着色，否则图标在浅色菜单栏上会是一团糊的彩色块。
+                #[cfg(target_os = "macos")]
+                let tray_builder = tray_builder.icon_as_template(true);
+                tray_builder
                     .menu(&tray_menu)
                     .show_menu_on_left_click(false)
                     .on_menu_event(|app, event| match event.id().as_ref() {
                         "show_main" => restore_main_window(app),
-                        "exit_app" => { if !crate::modules::screen_recording::finish_before_exit(app) { crate::modules::native_capture::stop_all(); crate::modules::native_microphone::stop_all(); app.exit(0); } },
+                        "exit_app" => graceful_exit(app),
                         _ => {}
                     })
                     .on_tray_icon_event(|tray, event| {
@@ -1230,20 +1460,57 @@ pub fn run() {
 
                 // 从用户配置读取自定义快捷键（缺省回落到默认键位），并完成注册。
                 // 用户在设置中修改后，前端会调用 apply_hotkeys 命令重新注册，无需重启。
-                let bindings = tauri::async_runtime::block_on(async {
-                    let cl = core_hk.lock().await;
-                    let cfg_mgr = cl.get_config_manager();
-                    let mgr = cfg_mgr.lock().await;
-                    let cfg = mgr.get_config();
-                    let d = HotkeyBindings::default();
-                    HotkeyBindings {
-                        mic: cfg.mic_hotkey.clone().unwrap_or(d.mic),
-                        global_mute: cfg.global_mute_hotkey.clone().unwrap_or(d.global_mute),
-                        push_to_talk: cfg.push_to_talk_hotkey.clone().unwrap_or(d.push_to_talk),
-                        summon: cfg.summon_hotkey.clone().unwrap_or(d.summon),
-                    }
-                });
-                register_global_hotkeys(&app_handle, Arc::clone(&core_hk), &bindings);
+                // 顺便读出菜单栏需要的语言与两个勾选项的初始状态，避免再锁一次配置。
+                let (bindings, menu_language, menu_close_to_tray, menu_auto_start) =
+                    tauri::async_runtime::block_on(async {
+                        let cl = core_hk.lock().await;
+                        let cfg_mgr = cl.get_config_manager();
+                        let mgr = cfg_mgr.lock().await;
+                        let cfg = mgr.get_config();
+                        let d = HotkeyBindings::default();
+                        let bindings = HotkeyBindings {
+                            mic: cfg.mic_hotkey.clone().unwrap_or(d.mic),
+                            global_mute: cfg.global_mute_hotkey.clone().unwrap_or(d.global_mute),
+                            push_to_talk: cfg.push_to_talk_hotkey.clone().unwrap_or(d.push_to_talk),
+                            summon: cfg.summon_hotkey.clone().unwrap_or(d.summon),
+                        };
+                        let language = cfg.language.clone().unwrap_or_else(|| "zh".to_string());
+                        let close_to_tray = cfg.close_to_tray.unwrap_or_else(
+                            crate::modules::config_manager::default_close_to_tray,
+                        );
+                        let auto_start = cfg.auto_startup.unwrap_or(false);
+                        (bindings, language, close_to_tray, auto_start)
+                    });
+                // 启动期的注册失败也要让前端知道。前端监听器可能还没就绪，用一个短暂
+                // 延迟后再发事件，避免启动早期事件丢失（纯日志仍会立即记录）。
+                let startup_failures =
+                    register_global_hotkeys(&app_handle, Arc::clone(&core_hk), &bindings);
+                if !startup_failures.is_empty() {
+                    let fail_handle = app_handle.clone();
+                    tauri::async_runtime::spawn(async move {
+                        tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+                        if let Err(error) =
+                            fail_handle.emit("hotkey-registration-failed", &startup_failures)
+                        {
+                            log::warn!("推送启动期快捷键注册失败事件出错: {error}");
+                        }
+                    });
+                }
+
+                // macOS 应用菜单栏：关于 / 设置 / 编辑 / 窗口 / 帮助。其他平台为空实现。
+                #[cfg(target_os = "macos")]
+                if let Err(error) = crate::modules::macos_menu::install(
+                    &app_handle,
+                    &menu_language,
+                    menu_close_to_tray,
+                    menu_auto_start,
+                ) {
+                    log::warn!("安装 macOS 应用菜单失败: {error}");
+                }
+                #[cfg(not(target_os = "macos"))]
+                {
+                    let _ = (&menu_language, menu_close_to_tray, menu_auto_start);
+                }
             } else {
                 println!("❌ [Setup] 无法获取 AppState，快捷键注册失败");
                 error!("无法获取 AppState，快捷键注册失败");
@@ -1366,6 +1633,9 @@ pub fn run() {
                         if let Err(e) = core.lock().await.shutdown().await {
                             error!("关闭错误: {}", e);
                         }
+                        // macOS：关闭常驻特权守护进程，终止其所有 root 子进程。
+                        #[cfg(target_os = "macos")]
+                        crate::modules::macos_privileged_daemon::shutdown_daemon().await;
                         if let Some(w) = ah.get_webview_window("main") {
                             let _ = w.close();
                         }
@@ -1385,7 +1655,7 @@ pub fn run() {
             panic!("error: {}", e);
         }
     };
-    app.run(|_app_handle, event| {
+    app.run(|app_handle, event| {
         // macOS：窗口被隐藏或最小化到 Dock 之后，点 Dock 图标 / 重新打开应用
         // 系统只会发 Reopen 事件。不处理的话主窗口就再也唤不回来，看起来像「卡死」。
         #[cfg(target_os = "macos")]
@@ -1393,13 +1663,96 @@ pub fn run() {
             info!("收到 macOS Reopen 事件，恢复主窗口 (has_visible_windows={has_visible_windows})");
             // 句柄缺失时 restore_main_window 只能静默返回，点图标会「毫无反应」。
             // 留下日志，让这类报告有据可查。
-            if _app_handle.get_webview_window("main").is_none() {
+            if app_handle.get_webview_window("main").is_none() {
                 warn!("Reopen 事件找不到 main 窗口句柄，无法唤回窗口");
             }
-            restore_main_window(_app_handle);
+            restore_main_window(app_handle);
         }
-        #[cfg(not(target_os = "macos"))]
-        let _ = &event;
+
+        // 统一退出清理：Cmd+Q（macOS 菜单的预置「退出」）、系统关机、以及任何
+        // 直接触发的退出都走这里。首次请求时先拦下，异步跑完网络/录制清理再真正退出；
+        // 清理完成后自己调用的 app.exit() 会带着标志再次进来，这次放行。
+        if let tauri::RunEvent::ExitRequested { code, api, .. } = &event {
+            // 程序化退出（code 为 Some，例如重启/自我退出）不拦截，直接放行。
+            if code.is_none()
+                && !SHUTDOWN_IN_PROGRESS.swap(true, std::sync::atomic::Ordering::AcqRel)
+            {
+                api.prevent_exit();
+                info!("收到退出请求，开始优雅清理网络与录制资源");
+                let ah = app_handle.clone();
+                // 录制未结束时先让前端把录像落盘，收到回执后再退出。
+                if crate::modules::screen_recording::finish_before_exit(&ah) {
+                    // finish_before_exit 已请求前端收尾；清理交给前端触发的后续退出，
+                    // 这里仅重置标志让下一次退出请求能继续走完整流程。
+                    SHUTDOWN_IN_PROGRESS.store(false, std::sync::atomic::Ordering::Release);
+                } else if let Some(state) = ah.try_state::<AppState>() {
+                    let core = Arc::clone(&state.core);
+                    tauri::async_runtime::spawn(async move {
+                        if let Err(error) = core.lock().await.shutdown().await {
+                            error!("退出前清理失败: {error}");
+                        }
+                        crate::modules::native_capture::stop_all();
+                        crate::modules::native_microphone::stop_all();
+                        // macOS：关闭常驻特权守护进程，终止其所有 root 子进程。
+                        #[cfg(target_os = "macos")]
+                        crate::modules::macos_privileged_daemon::shutdown_daemon().await;
+                        info!("清理完成，正式退出 MCTier");
+                        ah.exit(0);
+                    });
+                } else {
+                    ah.exit(0);
+                }
+            }
+        }
     });
     info!("MCTier 应用程序已关闭");
+}
+
+#[cfg(test)]
+mod hotkey_tests {
+    use super::normalize_hotkey;
+    use std::str::FromStr;
+    use tauri_plugin_global_shortcut::Shortcut;
+
+    /// normalize_hotkey 的产物必须能被 global-shortcut 的解析器接受，否则注册会失败，
+    /// 表现就是"设置里改了键、按下毫无反应"。这里把默认键位和常见组合都过一遍解析器。
+    #[test]
+    fn normalized_hotkeys_parse_for_the_shortcut_backend() {
+        for raw in [
+            "Ctrl+M",        // 麦克风开关默认键
+            "Ctrl+T",        // 全局听筒默认键
+            "F2",            // 临时开麦默认键
+            "Ctrl+Alt+M",    // 唤出窗口默认键
+            "Option+A",      // Mac 上 Option 等价 Alt
+            "Command+Shift+K",
+            "Shift+F1",
+        ] {
+            let normalized = normalize_hotkey(raw);
+            assert!(
+                Shortcut::from_str(&normalized).is_ok(),
+                "归一化结果 `{normalized}`（来自 `{raw}`）无法被 global-shortcut 解析，注册必然失败"
+            );
+        }
+    }
+
+    /// macOS 上物理 Ctrl 必须落到真正的 Control 而非 Super(Command)，否则会和应用自身的
+    /// Cmd 快捷键抢按键；功能键与单字母键的大小写也要规范，避免解析失败。
+    #[test]
+    fn modifier_mapping_is_stable() {
+        #[cfg(target_os = "macos")]
+        assert_eq!(normalize_hotkey("ctrl+m"), "Control+M");
+        #[cfg(not(target_os = "macos"))]
+        assert_eq!(normalize_hotkey("ctrl+m"), "CommandOrControl+M");
+
+        assert_eq!(normalize_hotkey("option+a"), "Alt+A");
+        assert_eq!(normalize_hotkey("cmd+shift+k"), "Super+Shift+K");
+        // 功能键保持用户输入的原样（多字符键不改大小写）；解析器大小写不敏感，仍可注册。
+        assert_eq!(normalize_hotkey("F2"), "F2");
+        assert_eq!(normalize_hotkey("f2"), "f2");
+        // 空白与多余加号不应产生空 token（空 token 会让解析器报错）。
+        assert_eq!(normalize_hotkey(" ctrl + m "), {
+            #[cfg(target_os = "macos")] { "Control+M".to_string() }
+            #[cfg(not(target_os = "macos"))] { "CommandOrControl+M".to_string() }
+        });
+    }
 }

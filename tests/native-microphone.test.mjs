@@ -158,11 +158,15 @@ test('other desktop backends retain their browser media path', async () => {
   assert.ok(!f.calls.some(([name]) => name === 'native_microphone_start'));
 });
 
-test('macOS keeps the microphone usable when the native unit cannot open', async () => {
-  const f = setup({ platform: 'MacIntel', startFailure: new Error('音频输入单元初始化失败') });
+test('macOS uses the browser path for microphone capture, bypassing the native unit', async () => {
+  // 未签名/ad-hoc 打包版里原生 AUHAL 输入回调不触发（coreaudiod 不认 TCC 授权），
+  // 所以 macOS 麦克风直接走 WKWebView getUserMedia，根本不碰原生单元。
+  // startFailure 即使设了也无所谓——原生路径不会被调用。
+  const f = setup({ platform: 'MacIntel', startFailure: new Error('不应触发：原生路径已跳过') });
   const stream = await f.api.openMicrophone('coreaudio:BuiltInMicrophoneDevice', true);
-  assert.equal(f.browser.length, 1, '原生失败后应当回退到浏览器采集');
-  // coreaudio: 前缀是 CoreAudio 的 UID，浏览器不认识，回退只能用系统默认设备。
+  assert.equal(f.browser.length, 1, 'macOS 麦克风应直接走浏览器采集');
+  assert.ok(!f.calls.some(([name]) => name === 'native_microphone_start'), '不应调用原生采集');
+  // coreaudio: 前缀是 CoreAudio 的 UID，浏览器不认识，回退时置空用系统默认设备。
   assert.equal(f.browser[0].audio.deviceId, undefined);
   assert.equal(stream.getAudioTracks()[0].readyState, 'live');
 });
@@ -173,11 +177,13 @@ test('macOS never falls back for system audio, which only the native path can ca
   assert.equal(f.browser.length, 0);
 });
 
-test('macOS stays on the native path while it works', async () => {
+test('macOS never opens the native microphone unit even when it would succeed', async () => {
+  // 契约变更：macOS 不再走原生采集单元，一律用浏览器 getUserMedia。
   const f = setup({ platform: 'MacIntel' });
-  await f.api.openMicrophone('coreaudio:BuiltInMicrophoneDevice');
-  assert.equal(f.browser.length, 0);
-  assert.equal(f.calls.find(([name]) => name === 'native_microphone_start')[1].deviceId, 'coreaudio:BuiltInMicrophoneDevice');
+  const stream = await f.api.openMicrophone('coreaudio:BuiltInMicrophoneDevice');
+  assert.equal(f.browser.length, 1, 'macOS 应直接用浏览器采集');
+  assert.ok(!f.calls.some(([name]) => name === 'native_microphone_start'), '不应调用原生采集');
+  assert.equal(stream.getAudioTracks()[0].readyState, 'live');
 });
 
 test('Windows never falls back to the browser on a native failure', async () => {

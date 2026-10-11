@@ -599,6 +599,29 @@ pub fn open_accessibility_privacy_settings() -> Result<(), String> {
     }
 }
 
+/// 设置 Dock 图标角标（macOS）。`count` 为 0 时清除角标，超过 99 显示 "99+"。
+/// 非 macOS 平台为空操作（Windows 的任务栏未读提示另有实现）。
+#[tauri::command]
+pub fn set_dock_badge(count: u32) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        let label = if count == 0 {
+            String::new()
+        } else if count > 99 {
+            "99+".to_string()
+        } else {
+            count.to_string()
+        };
+        crate::modules::macos_platform::set_dock_badge(&label);
+        Ok(())
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = count;
+        Ok(())
+    }
+}
+
 /// Restart into the permission-reset startup path. The new process waits for this
 /// WebView to exit before deleting EBWebView, avoiding locked-file failures.
 #[tauri::command]

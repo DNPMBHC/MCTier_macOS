@@ -94,6 +94,9 @@ objc2-foundation = { version = "0.3.2", features = ["NSArray", "NSError", "NSStr
 objc2-screen-capture-kit = { version = "0.3.2", features = ["SCShareableContent", "SCStream", "block2", "dispatch2"] }
 objc2-core-media = { version = "0.3.2", features = ["CMSampleBuffer", "CMBlockBuffer", "objc2-core-audio-types"] }
 objc2-core-audio-types = { version = "0.3.2", features = ["CoreAudioBaseTypes"] }
+# 麦克风 TCC 授权：原生 AUHAL 输入单元不会自己触发系统授权弹窗，未授权时它会
+# “成功”启动却只吐静音采样。必须先通过 AVCaptureDevice 查询/请求麦克风权限。
+objc2-av-foundation = { version = "0.3.2", features = ["AVCaptureDevice", "AVMediaFormat", "block2"] }
 
 [target.'cfg(windows)'.dependencies]
 webview2-com = "0.38.2"

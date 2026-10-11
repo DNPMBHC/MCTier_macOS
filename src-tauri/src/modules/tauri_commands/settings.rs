@@ -276,6 +276,13 @@ pub async fn save_settings(
         Err(e) => log::warn!("开机自启设置失败（非致命）: {}", e),
     }
 
+    // 4. macOS 菜单栏里的两个勾选项与设置页共用同一份配置，这里同步勾选状态，
+    //    避免「设置页改了、菜单栏还是旧状态」的不一致。非 macOS 为空操作。
+    crate::modules::macos_menu::set_auto_start_checked(auto_startup);
+    if let Some(v) = close_to_tray {
+        crate::modules::macos_menu::set_close_to_menu_bar_checked(v);
+    }
+
     log::info!("设置保存完成");
     Ok(())
 }

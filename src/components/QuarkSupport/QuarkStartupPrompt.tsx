@@ -6,15 +6,39 @@ import {
   useQuarkSupport,
 } from '../../services/quarkSupport';
 import { getLanguage, tl } from '../../i18n';
+import { isMacOSPlatform } from '../../utils/platform';
 import { QuarkSupportWindow } from './QuarkSupport';
 
 export const OPEN_QUARK_SUPPORT = 'mctier-open-quark-support';
 
 /** Keep the invitation pending while a higher-priority version prompt is active. */
+/** macOS 上「启动赞助提示只弹一次」的本地标记键。仅 macOS 生效：其它平台保持原样
+ * （每次启动都提示），这是本次仅针对 macOS 体验的小改动。 */
+const MACOS_PROMPT_SEEN_KEY = 'mctier.quarkStartupPrompt.seen';
+
+function macosPromptAlreadySeen(): boolean {
+  if (!isMacOSPlatform) return false;
+  try {
+    return localStorage.getItem(MACOS_PROMPT_SEEN_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
+function markMacosPromptSeen(): void {
+  if (!isMacOSPlatform) return;
+  try {
+    localStorage.setItem(MACOS_PROMPT_SEEN_KEY, '1');
+  } catch {
+    /* localStorage 不可用时退化为本次会话内不再弹（由 handled 状态兜底） */
+  }
+}
+
 export function QuarkStartupPrompt({ blocked, onBlockingChange }: { blocked: boolean; onBlockingChange: (blocking: boolean) => void }) {
   const state = useQuarkSupport();
   const [resolved, setResolved] = useState(false);
-  const [handled, setHandled] = useState(false);
+  // macOS 上若之前已经弹过，初始即视为已处理，启动时不再自动弹出。
+  const [handled, setHandled] = useState(() => macosPromptAlreadySeen());
   const [supportOpen, setSupportOpen] = useState(false);
   useEffect(() => {
     let active = true;
@@ -35,6 +59,10 @@ export function QuarkStartupPrompt({ blocked, onBlockingChange }: { blocked: boo
     };
   }, []);
   const open = resolved && state.ready && !state.loggedIn && !handled;
+  // macOS：提示一旦真正弹出就记下，之后启动不再自动弹（只弹一次）。
+  useEffect(() => {
+    if (open) markMacosPromptSeen();
+  }, [open]);
   useEffect(() => { onBlockingChange(!resolved || open || supportOpen); }, [resolved, open, supportOpen, onBlockingChange]);
   return (
     <>
