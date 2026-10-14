@@ -360,41 +360,8 @@ impl LobbyManager {
     /// - 非空时长度：8-32 个字符
     /// - 非空时必须包含字母和数字
     pub fn validate_password(password: &str) -> Result<(), LobbyError> {
-        let trimmed = password.trim();
-
-        // 留空表示无密码大厅。桌面端与 Android 端的密码框文案都是「留空创建无密码大厅」，
-        // 若此处仍强制 8 位，就会出现前端允许提交、后端直接拒绝的矛盾（issue #42）。
-        if trimmed.is_empty() {
-            return Ok(());
-        }
-
-        // 检查长度
-        if trimmed.len() < 8 {
-            return Err(LobbyError::InvalidInput(
-                "密码至少需要 8 个字符".to_string(),
-            ));
-        }
-        if trimmed.len() > 32 {
-            return Err(LobbyError::InvalidInput("密码最多 32 个字符".to_string()));
-        }
-
-        // 检查是否包含字母
-        let has_letter = trimmed.chars().any(|c| c.is_alphabetic());
-        if !has_letter {
-            return Err(LobbyError::InvalidInput(
-                "密码必须包含至少一个字母".to_string(),
-            ));
-        }
-
-        // 检查是否包含数字
-        let has_digit = trimmed.chars().any(|c| c.is_numeric());
-        if !has_digit {
-            return Err(LobbyError::InvalidInput(
-                "密码必须包含至少一个数字".to_string(),
-            ));
-        }
-
-        Ok(())
+        super::lobby_address::validate_password_policy(password)
+            .map_err(LobbyError::InvalidInput)
     }
 
     /// 创建大厅

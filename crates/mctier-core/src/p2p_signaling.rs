@@ -1,4 +1,4 @@
-use crate::modules::error::AppError;
+use crate::error::AppError;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::net::{SocketAddr, UdpSocket};

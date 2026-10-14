@@ -1,4 +1,4 @@
-use crate::modules::error::AppError;
+use crate::error::AppError;
 use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;

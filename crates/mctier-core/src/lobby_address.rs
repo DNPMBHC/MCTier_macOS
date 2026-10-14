@@ -67,6 +67,31 @@ pub fn configuration(
     Ok((config, automatic))
 }
 
+
+/// 校验大厅密码是否符合安全策略：
+/// - 留空（或仅空白字符）表示无密码大厅，直接放行
+/// - 非空时长度：8-32 个字符
+/// - 非空时必须包含字母和数字
+pub fn validate_password_policy(password: &str) -> Result<(), String> {
+    let trimmed = password.trim();
+    if trimmed.is_empty() {
+        return Ok(());
+    }
+    if trimmed.len() < 8 {
+        return Err("密码至少需要 8 个字符".to_string());
+    }
+    if trimmed.len() > 32 {
+        return Err("密码最多 32 个字符".to_string());
+    }
+    if !trimmed.chars().any(|c| c.is_alphabetic()) {
+        return Err("密码必须包含至少一个字母".to_string());
+    }
+    if !trimmed.chars().any(|c| c.is_numeric()) {
+        return Err("密码必须包含至少一个数字".to_string());
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

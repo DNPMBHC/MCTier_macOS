@@ -112,8 +112,7 @@ pub fn protect_lobby_password(password: String) -> Result<String, String> {
         return Ok(password);
     }
     let plain = resolve(&password)?;
-    crate::modules::lobby_manager::LobbyManager::validate_password(&plain)
-        .map_err(|e| e.to_string())?;
+    super::lobby_address::validate_password_policy(&plain)?;
     Ok(format!(
         "{}{}",
         LOCAL_PREFIX,

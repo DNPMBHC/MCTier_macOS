@@ -1,12 +1,39 @@
 // MCTier 后端模块
 // 本文件作为后端模块的入口点，用于组织和导出各个子模块
+//
+// # 平台化重构中的迁移说明
+//
+// 平台无关模块正分批迁往 `mctier-core`。**旧路径在这里重导出**，因此现有
+// `crate::modules::X` 引用无需改动，迁移得以逐批验证而不是一次性大搬迁。
+// 本文件是唯一需要跟着迁移改的地方；调用方与测试都不受影响。
 
-// 错误处理 / 应用路径 / 日志：已迁往 mctier-core（平台无关核心）。
-// 在旧路径上重导出，使现有 `crate::modules::X` 引用无需改动，迁移得以分批验证。
+// ============================================================
+//  已迁往 mctier-core 的平台无关模块（重导出以保持旧路径可用）
+// ============================================================
+
+// 基础层
 pub use mctier_core::{app_paths, error, logs};
 
-// 配置管理模块
-pub mod config_manager;
+// 网络与安全基础
+pub use mctier_core::{hosts_security, http_cors, virtual_network};
+
+// 身份与密钥
+pub use mctier_core::{chat_auth, secret_store};
+
+// 配置与寻址
+pub use mctier_core::{config_manager, lobby_address};
+
+// 服务层
+pub use mctier_core::{
+    chat_service, file_transfer, p2p_signaling, websocket_signaling,
+};
+
+// Minecraft 集成
+pub use mctier_core::{mc_lan_bridge, minecraft_discovery};
+
+// ============================================================
+//  仍在本 crate 的模块
+// ============================================================
 
 // 资源管理模块
 pub mod resource_manager;
@@ -15,16 +42,13 @@ pub mod resource_manager;
 pub mod network_service;
 
 // 大厅管理模块
-pub mod lobby_address;
 pub mod lobby_manager;
 
 // Hosts文件管理模块（Magic DNS）
 pub mod helper_handshake;
 pub mod hosts_manager;
-pub mod hosts_security;
 #[cfg(unix)]
 pub mod unix_hosts_helper;
-pub mod virtual_network;
 
 // 语音服务模块
 #[cfg(windows)]
@@ -39,12 +63,6 @@ pub mod voice_service;
 #[cfg(windows)]
 pub mod windows_paths;
 
-// P2P信令服务模块
-pub mod p2p_signaling;
-
-// WebSocket信令服务模块
-pub mod websocket_signaling;
-
 // 应用核心模块
 pub mod app_core;
 
@@ -57,25 +75,8 @@ pub mod easytier_advanced_commands;
 // Tauri 事件推送模块
 pub mod tauri_events;
 
-// 局域网 HTTP 服务的 CORS 策略（文件共享 / P2P 聊天共用）：已迁往 mctier-core。
-pub use mctier_core::http_cors;
-
-// 高性能文件传输模块
-pub mod file_transfer;
-
-// P2P聊天服务模块
-pub mod chat_service;
-
-// 聊天鉴权：每成员密钥对 + 请求签名（消除虚拟IP伪造空间）——已迁往 mctier-core。
+// 内置表情
 pub mod builtin_emoji;
-pub use mctier_core::chat_auth;
-pub mod secret_store;
-
-// Minecraft 局域网世界自动发现模块
-pub mod minecraft_discovery;
-
-// Minecraft 局域网中继桥（让虚拟网内的 MC 世界出现在本机 Minecraft 局域网列表）
-pub mod mc_lan_bridge;
 
 // 远程控制（输入注入）模块
 pub mod remote_control;
@@ -90,7 +91,6 @@ pub mod quark_background;
 mod quark_scheduler;
 #[cfg(all(test, windows))]
 mod quark_webview_test;
-
 
 // Linux 平台支撑（TUN 文件能力 / 网卡检测 / 防火墙 / XDG 自启动）
 #[cfg(target_os = "linux")]
