@@ -30,8 +30,9 @@ find_binary() {
     /usr/bin/mctier \
     /usr/local/bin/mctier \
     /opt/mctier/mctier \
-    "${DESKTOP_ROOT}/src-tauri/target/release/mctier" \
-    "${DESKTOP_ROOT}/src-tauri/target/debug/mctier"
+    # workspace 化后产物在仓库根 target/。
+    "${DESKTOP_ROOT}/target/release/mctier" \
+    "${DESKTOP_ROOT}/target/debug/mctier"
   do
     if [[ -x "$candidate" ]]; then
       printf '%s' "$candidate"

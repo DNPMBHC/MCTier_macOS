@@ -54,7 +54,8 @@ jobs:
         run: rustfmt --edition 2021 --check src/command_registry.rs src/modules/app_core.rs src/modules/error.rs src/modules/logs.rs src/modules/tauri_commands/logging.rs
       - name: Check lockfile is present
         shell: pwsh
-        run: if (-not (Test-Path src-tauri/Cargo.lock)) { throw 'Cargo.lock is required' }
+        # workspace 化后 lockfile 位于仓库根。
+        run: if (-not (Test-Path Cargo.lock)) { throw 'Cargo.lock is required' }
 
   android-source:
     name: Android source checks

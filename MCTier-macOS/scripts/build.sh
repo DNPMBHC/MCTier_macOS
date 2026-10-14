@@ -91,5 +91,5 @@ else
   npm run tauri -- build --bundles dmg "${TAURI_MACOS_CONFIG_ARGS[@]}"
 fi
 
-printf '\nmacOS 构建完成，产物位于 src-tauri/target/。\n'
+printf '\nmacOS 构建完成，产物位于 target/（workspace 根，不再是 src-tauri/target）。\n'
 printf '未签名/未公证构建仅用于本机验证；正式分发需要 Developer ID 签名和 notarization。\n'

@@ -1,0 +1,20 @@
+# MCTier Cargo workspace
+#
+# 这是渐进式平台化重构的第一步：先把 workspace 外壳立起来，隔离出「产物目录与 lockfile
+# 上移到根」这类结构性影响，再往里搬 crate。后续 crates/ 下的 core 与各平台实现会逐个加入。
+#
+# 两个必须知道的副作用（构建脚本与 CI 已同步更新）：
+# 1. cargo 产物目录从 src-tauri/target 变为 <root>/target，Cargo.lock 也从 src-tauri/ 上移。
+# 2. 子包的 [profile.*] 会被忽略，profile 必须写在本文件里。
+[workspace]
+members = ["src-tauri"]
+# shared/image-optimizer 刻意排除在外：Android 构建脚本以 `cargo ndk ... --locked` 在该目录下
+# 独立构建它，并把它自己的 Cargo.lock 声明为 Gradle 的构建输入。一旦并入本 workspace，
+# cargo 会改用根 lockfile 与根 target，--locked 可能失败、Gradle 的输入文件也会变成死文件。
+exclude = ["shared/image-optimizer"]
+resolver = "2"
+
+# 原先写在 src-tauri/Cargo.toml 与 shared/image-optimizer/Cargo.toml 里，两处都会被忽略，
+# 因此提到根。行为与原来一致（发布产物剥离符号表）。
+[profile.release]
+strip = true

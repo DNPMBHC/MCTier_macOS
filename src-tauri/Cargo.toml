@@ -132,9 +132,8 @@ windows = { version = "0.58", features = [
     "Win32_Networking_WinSock",
 ] }
 
-# 发布构建：剥离符号，避免二进制中残留调试信息与开发机绝对路径（见 issue #17 第 11 条）
-[profile.release]
-strip = true
+# 发布构建的 strip 已上移到仓库根的 [profile.release]：作为 workspace 成员，这里的
+# [profile.*] 会被 cargo 忽略（并产生警告），因此不再在本文件重复声明。
 [dev-dependencies]
 proptest = "1"
 tempfile = "3"

@@ -1,7 +1,8 @@
 import { build } from 'esbuild';
 import fs from 'node:fs/promises';
 import ts from 'typescript';
-const output = 'src-tauri/target/audio-webview-check';
+// workspace 化后产物在仓库根 target/。
+const output = 'target/audio-webview-check';
 const rtcSource = ts.createSourceFile('WebRTCClient.ts', await fs.readFile('src/services/webrtc/WebRTCClient.ts', 'utf8'), ts.ScriptTarget.Latest, true);
 const stubs = new Map();
 for (const statement of rtcSource.statements) {

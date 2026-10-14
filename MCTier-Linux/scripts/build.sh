@@ -88,8 +88,9 @@ else
 fi
 
 log "构建完成，产物位于:"
-printf '  %s\n' "${DESKTOP_ROOT}/src-tauri/target/release/bundle/"
-if [[ -d src-tauri/target/release/bundle ]]; then
-  find src-tauri/target/release/bundle -maxdepth 2 -type f \
+# workspace 化后产物在仓库根 target/。
+printf '  %s\n' "${DESKTOP_ROOT}/target/release/bundle/"
+if [[ -d "${DESKTOP_ROOT}/target/release/bundle" ]]; then
+  find "${DESKTOP_ROOT}/target/release/bundle" -maxdepth 2 -type f \
     \( -name '*.deb' -o -name '*.AppImage' -o -name '*.rpm' \) -printf '  %p\n' 2>/dev/null || true
 fi

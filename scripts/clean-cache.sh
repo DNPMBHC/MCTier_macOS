@@ -6,7 +6,7 @@
 #   ./scripts/clean-cache.sh debug    # 安全清理 + 整个 debug 构建目录(下次 tauri dev 全量重编译)
 #   ./scripts/clean-cache.sh full     # 全部清理:含 release 产物(会删掉已打好的 DMG)和 node_modules
 #
-# 注意:故意不用 `cargo clean`——它会把 src-tauri/target/sherpa-onnx-prebuilt 里
+# 注意:故意不用 `cargo clean`——它会把 target/sherpa-onnx-prebuilt 里
 # 下载好的预编译库一起删掉,而 macOS 没有现成的脚本可以重新下载它。
 #
 # 清理前会检查有没有构建/检查进程(cargo/rustc/tauri)或 MCTier 正在跑,有则拒绝执行,
@@ -14,7 +14,8 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-TARGET="$ROOT/src-tauri/target"
+# workspace 化后 cargo 产物目录在仓库根,不再是 src-tauri/target。
+TARGET="$ROOT/target"
 MODE="${1:-safe}"
 
 # 编译器会边删边往 target 里写文件(rm -rf 报 "Directory not empty" 并破坏增量缓存),

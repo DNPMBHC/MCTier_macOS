@@ -38,6 +38,8 @@ MCTier-Android/screen_now.png
 MCTier-Android/color_sample.txt
 
 # Tauri / Rust
+# workspace 化后 cargo 产物目录上移到仓库根；保留旧路径以防本地残留目录。
+/target
 src-tauri/target
 src-tauri/WixTools
 

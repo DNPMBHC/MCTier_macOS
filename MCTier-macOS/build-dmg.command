@@ -52,7 +52,8 @@ printf '日志: %s\n\n' "${LOG_FILE}"
 
 "${SCRIPT_DIR}/scripts/build.sh"
 
-DMG_DIR="${ROOT}/src-tauri/target/release/bundle/dmg"
+# workspace 化后产物目录在仓库根，不再是 src-tauri/target。
+DMG_DIR="${ROOT}/target/release/bundle/dmg"
 shopt -s nullglob
 DMGS=("${DMG_DIR}"/*.dmg)
 shopt -u nullglob

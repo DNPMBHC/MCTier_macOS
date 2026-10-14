@@ -99,7 +99,8 @@ jobs:
         run: |
           set -eu
           shopt -s nullglob
-          files=(src-tauri/target/${{ matrix.target }}/release/bundle/dmg/*.dmg)
+          # workspace 化后产物在仓库根 target/，不再是 src-tauri/target。
+          files=(target/${{ matrix.target }}/release/bundle/dmg/*.dmg)
           ((${#files[@]} > 0)) || { echo '未生成 DMG'; exit 1; }
           for f in "${files[@]}"; do
             test -s "$f" || { echo "DMG 为空: $f"; exit 1; }
@@ -110,7 +111,7 @@ jobs:
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: MCTier-macOS-${{ matrix.target }}
-          path: src-tauri/target/${{ matrix.target }}/release/bundle/dmg/*.dmg
+          path: target/${{ matrix.target }}/release/bundle/dmg/*.dmg
           if-no-files-found: error
           retention-days: 14
 
