@@ -16,8 +16,10 @@ const levelContext = vm.createContext({ exports: {} });
 vm.runInContext(ts.transpileModule(fs.readFileSync('src/services/voice/microphoneLevel.ts', 'utf8'), {
   compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
 }).outputText, levelContext);
-function setup({ native = true, moduleFailure = false, startFailure = null, resumeMode = 'running', platform = 'Linux x86_64', timers = { setTimeout, clearTimeout } } = {}) {
+function setup({ native = true, moduleFailure = false, startFailure = null, resumeMode = 'running', platform = 'Linux x86_64', headphoneMode = false, micGain = 3, timers = { setTimeout, clearTimeout } } = {}) {
   const calls = [], reads = [], nodes = [], contexts = [], browser = [];
+  // 记录软件增益图里创建了哪些节点，用于断言耳机模式确实补了增益级。
+  const graph = { sources: 0, gains: [], compressors: 0 };
   const window = new EventTarget();
   class Track extends EventTarget {
     readyState = 'live';
@@ -32,6 +34,13 @@ function setup({ native = true, moduleFailure = false, startFailure = null, resu
     constructor() { contexts.push(this); }
     audioWorklet = { addModule: async () => { if (moduleFailure) throw new Error('worklet'); } };
     createMediaStreamDestination() { return { stream }; }
+    // 软件增益级（macOS 耳机低延迟模式）所需的节点。
+    createMediaStreamSource() { graph.sources++; return { connect() {}, disconnect() {} }; }
+    createGain() { const node = { gain: { value: 1 }, connect() {}, disconnect() {} }; graph.gains.push(node); return node; }
+    createDynamicsCompressor() {
+      graph.compressors++;
+      return { threshold: { value: 0 }, knee: { value: 0 }, ratio: { value: 0 }, attack: { value: 0 }, release: { value: 0 }, connect() {}, disconnect() {} };
+    }
     async resume() {
       if (resumeMode === 'reject') throw new Error('resume denied');
       if (resumeMode === 'hang') return new Promise(() => {});
@@ -57,12 +66,12 @@ function setup({ native = true, moduleFailure = false, startFailure = null, resu
   } };
   const platformContext = vm.createContext({ exports: {}, navigator: { platform } });
   vm.runInContext(platformCode, platformContext);
-  const context = vm.createContext({ exports: {}, require: path => path.includes('microphoneLevel') ? levelContext.exports : path.includes('platform') ? platformContext.exports : path.includes('worklet') || path.includes('Worklet') ? { default: 'worklet.js' } : api,
+  const context = vm.createContext({ exports: {}, require: path => path.includes('microphoneLevel') ? levelContext.exports : path.includes('macEchoMode') ? { macHeadphoneMode: () => headphoneMode, macMicGain: () => micGain } : path.includes('platform') ? platformContext.exports : path.includes('worklet') || path.includes('Worklet') ? { default: 'worklet.js' } : api,
     AudioContext: Context, AudioWorkletNode: Worklet, ArrayBuffer, DOMException, Event, window, console, ...timers,
     navigator: { platform, mediaDevices: { getUserMedia: async options => { browser.push(options); return stream; } } },
   });
   vm.runInContext(code, context);
-  return { api: context.exports, calls, reads, nodes, contexts, browser, track, window };
+  return { api: context.exports, calls, reads, nodes, contexts, browser, graph, track, window };
 }
 test('native enumeration never starts recording; Windows capture never asks the browser', async () => {
   const f = setup();
@@ -291,4 +300,110 @@ test('voice PCM remains continuous under 40 ms screen-sharing IPC stalls', () =>
   }
   assert.ok(messages.filter(m => typeof m === 'object').every(m => m.underrun === 0));
   assert.equal(messages.filter(m => m === 'consumed').length, 200);
+});
+
+test('macOS headphone mode disables every platform audio unit (VPIO) and restores level in software', async () => {
+  // 平台处理只要有一项为 true，WebKit 就可能启用 VPIO 全双工单元 → 双向卡顿。
+  // 因此耳机模式三项全关，改用我们自己的软件增益级补回音量（平台 AGC 也随之失去）。
+  const f = setup({ platform: 'MacIntel', headphoneMode: true, micGain: 4 });
+  await f.api.openMicrophone('', true);
+  assert.equal(f.browser.length, 1);
+  const { audio } = f.browser[0];
+  assert.equal(audio.echoCancellation, false, '耳机模式必须关 AEC 以解除 VPIO 全双工瓶颈');
+  assert.equal(audio.autoGainControl, false, '平台 AGC 与 AEC 同属 VPIO，一并关闭');
+  assert.equal(audio.noiseSuppression, false, '平台降噪同属 VPIO，一并关闭');
+  // 音量由软件增益级补回：必须有增益节点与限幅压缩器，且增益等于用户设定值。
+  assert.equal(f.graph.sources, 1, '应把原始采集接入软件增益图');
+  assert.equal(f.graph.gains.length, 1, '应创建一个增益节点');
+  assert.equal(f.graph.gains[0].gain.value, 4, '增益应等于用户设定的麦克风音量');
+  assert.equal(f.graph.compressors, 1, '应有限幅压缩器防止增益后削顶');
+});
+
+test('macOS headphone mode preserves the raw stream deviceId and releases capture on stop', async () => {
+  // 上层会用 getSettings().deviceId 比对设备；软件增益后的轨道必须沿用原始设备 id，
+  // 否则会被误判为“设备没生效”而反复重开麦克风。stop() 也必须连带释放底层采集。
+  const f = setup({ platform: 'MacIntel', headphoneMode: true });
+  const stream = await f.api.openMicrophone('', true);
+  const track = stream.getAudioTracks()[0];
+  assert.equal(track.getSettings().deviceId, '', '原始 mock 轨道无 deviceId，应透传空值而非编造');
+  track.stop();
+  assert.equal(f.track.readyState, 'ended', '停止处理后轨道必须同时停止原始采集');
+  assert.equal(f.contexts[0].state, 'closed', '停止后应关闭软件增益的 AudioContext');
+});
+
+test('macOS speaker (default) mode keeps full platform processing so speakers do not echo', async () => {
+  const f = setup({ platform: 'MacIntel', headphoneMode: false });
+  await f.api.openMicrophone('', true);
+  const { audio } = f.browser[0];
+  assert.equal(audio.echoCancellation, true, '外放需要 AEC');
+  assert.equal(audio.autoGainControl, true);
+  assert.equal(audio.noiseSuppression, true);
+  assert.equal(f.graph.gains.length, 0, '非耳机模式不应插入软件增益级');
+});
+
+test('headphone mode is macOS-only: other platforms ignore the switch and keep full processing', async () => {
+  // 非 macOS 平台不读这个开关，也不插入软件增益级，行为完全不变。
+  const f = setup({ platform: 'Win32', headphoneMode: true, native: false });
+  await f.api.openMicrophone('win-mic', true);
+  const { audio } = f.browser[0];
+  assert.equal(audio.echoCancellation, true);
+  assert.equal(audio.autoGainControl, true);
+  assert.equal(f.graph.gains.length, 0, '非 macOS 不应插入软件增益级');
+});
+
+test('voice meter still jumps while the software-gained headphone path captures quiet PCM', () => {
+  // 仿真「电平条有跳动但声音很小」：电平由 AnalyserNode 读采集幅度，只要有信号就跳；
+  // 音量大小是另一回事（增益）。两者可同时成立，正是用户观察到的现象。
+  const { pcmRms, microphoneLevelPercent } = levelContext.exports;
+  const quietSignal = new Float32Array(960).fill(0.004);
+  const quietLevel = microphoneLevelPercent(pcmRms(quietSignal));
+  assert.ok(quietLevel > 0, '小幅度信号仍让电平条跳动（用户看到的现象）');
+  const normalSignal = new Float32Array(960).fill(0.08);
+  const normalLevel = microphoneLevelPercent(pcmRms(normalSignal));
+  assert.ok(normalLevel - quietLevel >= 20, '增益带来的提升应显著抬升可听音量/电平');
+});
+
+test('headphone mode never persists across an app restart (forgetting to turn it off self-heals)', () => {
+  // 旧版本把开关写进 localStorage，用户忘了关会永久生效。现在读取只看内存态，
+  // 启动时还主动清除残留值，所以重开软件一定回到安全默认。
+  const fs2 = fs.readFileSync('src/services/voice/macEchoMode.ts', 'utf8');
+  assert.match(fs2, /let sessionEnabled = false/, '开关状态必须以内存变量为准');
+  assert.match(fs2, /export function resetMacHeadphoneModeOnStartup/, '必须提供启动重置入口');
+  assert.match(fs2, /localStorage\.removeItem\(KEY\)/, '启动重置必须清掉旧的持久化值');
+  // 读取路径不能直接读 localStorage，否则重启后残留值会复活。
+  const reader = fs2.slice(fs2.indexOf('export function macHeadphoneMode'), fs2.indexOf('export function setMacHeadphoneMode'));
+  assert.ok(!reader.includes('localStorage.getItem'), 'macHeadphoneMode 不得读取 localStorage');
+  // App 启动时必须调用重置。
+  const app = fs.readFileSync('src/App.tsx', 'utf8');
+  assert.match(app, /resetMacHeadphoneModeOnStartup\(\)/, 'App 启动时必须重置低延迟模式');
+});
+
+test('speaker output is detected so low-latency mode auto-reverts instead of echoing', async () => {
+  // 防呆：外放扬声器下不允许开低延迟（会回声）。检测逻辑以设备名判定，认不出时按耳机处理。
+  const moduleCode = ts.transpileModule(fs.readFileSync('src/services/voice/macEchoMode.ts', 'utf8'), {
+    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
+  }).outputText;
+  const store = new Map();
+  const make = (label) => vm.createContext({
+    exports: {}, console,
+    localStorage: { getItem: (k) => store.get(k) ?? null, setItem: (k, v) => store.set(k, v), removeItem: (k) => store.delete(k) },
+    navigator: { mediaDevices: { enumerateDevices: async () => [
+      { kind: 'audiooutput', deviceId: 'default', groupId: 'g1', label: label ? `Default - ${label}` : '' },
+      { kind: 'audiooutput', deviceId: 'real', groupId: 'g1', label },
+    ] } },
+  });
+  const cases = [
+    ['MacBook Pro 扬声器', true],
+    ['Built-in Speaker', true],
+    ['External Speakers', true],
+    ['AirPods Pro', false],
+    ['WH-1000XM4', false],
+    ['Headphones', false],
+    ['', false],
+  ];
+  for (const [label, expected] of cases) {
+    const ctx = make(label);
+    vm.runInContext(moduleCode, ctx);
+    assert.equal(await ctx.exports.macOutputIsSpeaker(), expected, `label=${JSON.stringify(label)}`);
+  }
 });

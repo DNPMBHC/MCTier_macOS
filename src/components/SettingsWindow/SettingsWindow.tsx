@@ -1,7 +1,7 @@
 import { DownloadFolderSetting } from '../FileShareManager/DownloadFolderSetting';
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Form, Input, Switch, message, Tooltip, App, Slider, Button, Modal } from 'antd';
+import { Form, Input, Switch, message, Tooltip, App, Slider, Button, Modal, Segmented } from 'antd';
 import { PasswordInput } from '../PasswordInput/PasswordInput';
 import { SponsorAd } from '../SponsorAd/SponsorAd';
 import { invoke } from '@tauri-apps/api/core';
@@ -57,8 +57,8 @@ const HOTKEY_ITEMS: Array<{ key: HotkeyKey; zh: string; en: string; zhDesc: stri
   },
   {
     key: 'pushToTalkHotkey',
-    zh: '临时开麦', en: 'Push to Talk',
-    zhDesc: '按住时开麦，松开后自动恢复原状态', enDesc: 'Mic opens while held, restores when released',
+    zh: '按键说话 / 临时开麦', en: 'Push to Talk',
+    zhDesc: '「按键说话」模式下按住此键才发声；其它模式下按住临时开麦、松开恢复', enDesc: 'In Push-to-Talk mode, hold this key to transmit; otherwise it temporarily opens the mic while held',
   },
   {
     key: 'summonHotkey',
@@ -82,6 +82,8 @@ export const SettingsWindow: React.FC<{ onClose: () => void }> = ({ onClose }) =
   const [avatarData, setAvatarData] = useState<string | undefined>();
   // 全局快捷键：用户可自定义，改完立即重新注册生效
   const [hotkeys, setHotkeys] = useState<Record<HotkeyKey, string>>({ ...DEFAULT_HOTKEYS });
+  // 语音模式：常开 / 按键说话(PTT) / 声控(VAD)
+  const [voiceMode, setVoiceModeState] = useState<'open' | 'ptt' | 'vad'>('open');
   const [showRestartModal, setShowRestartModal] = useState(false);
   const [showStats, setShowStats] = useState(false);
   const [themePreference, setThemePreference] = useState<ThemePreference>(readThemePreference);
@@ -143,6 +145,9 @@ export const SettingsWindow: React.FC<{ onClose: () => void }> = ({ onClose }) =
         summonHotkey: settings.summonHotkey ?? DEFAULT_HOTKEYS.summonHotkey,
       };
       setHotkeys(hk);
+      setVoiceModeState(
+        settings.voiceMode === 'ptt' || settings.voiceMode === 'vad' ? settings.voiceMode : 'open'
+      );
       settingsRef.current = {
         autoStartup: as_,
         language,
@@ -314,6 +319,7 @@ export const SettingsWindow: React.FC<{ onClose: () => void }> = ({ onClose }) =
         globalMuteHotkey: merged.globalMuteHotkey ?? null,
         pushToTalkHotkey: merged.pushToTalkHotkey ?? null,
         summonHotkey: merged.summonHotkey ?? null,
+        voiceMode: merged.voiceMode ?? null,
         // 出口节点配置
         enableExitNode: merged.enableExitNode !== undefined ? merged.enableExitNode : null,
         enableAsExitNode: merged.enableAsExitNode !== undefined ? merged.enableAsExitNode : null,
@@ -381,6 +387,13 @@ export const SettingsWindow: React.FC<{ onClose: () => void }> = ({ onClose }) =
     setAutoStartup(v);
     form.setFieldValue('autoStartup', v);
     await saveAll({ autoStartup: v });
+  };
+
+  // 语音模式切换：保存配置 + 广播给 App 的 voiceMode 控制器立即生效。
+  const handleVoiceModeChange = async (mode: 'open' | 'ptt' | 'vad') => {
+    setVoiceModeState(mode);
+    await saveAll({ voiceMode: mode });
+    window.dispatchEvent(new CustomEvent('mctier-voice-mode-changed', { detail: mode }));
   };
 
   const handleAutoLobbyChange = async (v: boolean) => {
@@ -467,6 +480,27 @@ export const SettingsWindow: React.FC<{ onClose: () => void }> = ({ onClose }) =
               </div>
               <div className="settings-card-desc">{tl('配置所有大厅默认使用的语音降噪设备。', 'Configure the default voice noise-removal device for all lobbies.')}</div>
               <NvidiaNoiseSetting />
+              <div className="settings-toggle-row" style={{ marginTop: 12, flexWrap: 'wrap', gap: 8 }}>
+                <div className="settings-toggle-info">
+                  <span className="settings-toggle-label">{tl('语音模式', 'Voice Mode')}</span>
+                  <span className="settings-toggle-desc">
+                    {voiceMode === 'ptt'
+                      ? tl('按住快捷键（下方「临时开麦」键）时才发声，松开即停', 'Transmit only while holding the hotkey (see "Push to Talk" below); release to stop')
+                      : voiceMode === 'vad'
+                        ? tl('检测到你说话时自动发声，静音时自动停止', 'Transmit automatically when you speak; stops on silence')
+                        : tl('麦克风开启后持续发声（默认）', 'Transmit continuously while the mic is on (default)')}
+                  </span>
+                </div>
+                <Segmented
+                  value={voiceMode}
+                  onChange={(v) => { void handleVoiceModeChange(v as 'open' | 'ptt' | 'vad'); }}
+                  options={[
+                    { label: tl('常开', 'Open'), value: 'open' },
+                    { label: tl('按键说话', 'Push to Talk'), value: 'ptt' },
+                    { label: tl('声控', 'Voice Activated'), value: 'vad' },
+                  ]}
+                />
+              </div>
             </motion.div>
 
             <motion.div className="settings-card" variants={itemVariants}>

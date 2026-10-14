@@ -81,6 +81,9 @@ export const sanitizePersistedConfig = (value: unknown): UserConfig => {
   if (micHotkey) result.micHotkey = micHotkey;
   if (globalMuteHotkey) result.globalMuteHotkey = globalMuteHotkey;
   if (pushToTalkHotkey) result.pushToTalkHotkey = pushToTalkHotkey;
+  if (input.voiceMode === 'ptt' || input.voiceMode === 'vad' || input.voiceMode === 'open') {
+    result.voiceMode = input.voiceMode;
+  }
   const windowPosition = normalizeWindowPosition(input.windowPosition);
   if (windowPosition) result.windowPosition = windowPosition;
   const audioDeviceId = safeString(input.audioDeviceId, 512);

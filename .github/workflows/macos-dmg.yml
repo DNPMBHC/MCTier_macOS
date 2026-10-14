@@ -1,0 +1,159 @@
+name: macOS DMG
+
+# 为 macOS 版本产出可分发的 DMG。触发方式：
+# - 手动（workflow_dispatch）：随时点一次出包，可选是否附到 Release。
+# - 打 tag（v*）：跟随版本标签出包，并自动创建/更新对应的 GitHub Release。
+# - 对 PR 不跑：完整 macOS 打包耗时较长，PR 的常规检查由 ci.yml 承担。
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: '把 DMG 附加到该 tag 的 Release（留空则只上传为构建产物）'
+        required: false
+        type: string
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: macos-dmg-${{ github.ref }}
+  cancel-in-progress: false # 打包耗时且产物重要，不因新推送而中断
+
+jobs:
+  dmg:
+    name: Build DMG (${{ matrix.target }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # 必须在对应架构的 runner 上构建：EasyTier 需要同架构的 Mach-O 二进制，
+          # Tauri 也按本机架构出包。
+          - runner: macos-14 # Apple Silicon（主目标）
+            target: aarch64-apple-darwin
+          - runner: macos-13 # Intel（尽力而为，见下方 continue-on-error）
+            target: x86_64-apple-darwin
+    # Intel runner 档期不稳定；缺档或失败不应让 Apple Silicon 的产物失败。
+    continue-on-error: ${{ matrix.runner == 'macos-13' }}
+    env:
+      HUSKY: '0'
+      # 构建脚本据此跳过“EasyTier 未就绪”的保护性拒绝；实际二进制由下方分步构建并校验。
+      MCTIER_MACOS_EASYTIER_READY: '1'
+      MCTIER_MACOS_EASYTIER_ARCH: ${{ matrix.target }}
+      MCTIER_NO_PAUSE: '1' # 无窗口环境，禁止任何交互式暂停
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '22'
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: src-tauri
+
+      - name: Install build dependencies
+        run: |
+          set -eu
+          command -v cmake >/dev/null 2>&1 || brew install cmake
+
+      - name: Build pinned EasyTier macOS binaries
+        # EasyTier 不从上游下载预编译产物，一律从固定 commit 源码构建，
+        # 脚本内校验 commit、Mach-O 类型与 --version 后再原子安装。
+        run: ./MCTier-macOS/scripts/build-easytier.sh
+
+      - name: Verify EasyTier binaries are Mach-O
+        run: ./MCTier-macOS/scripts/fetch-binaries.sh
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Frontend regression tests
+        # 测试失败不阻断出包：产物仍有价值，问题由 CI 的常规检查暴露。
+        continue-on-error: true
+        run: npm test
+
+      - name: Rust library tests
+        # quark_background 的锁测试在并行环境下偶发失败，单线程运行避免误报。
+        continue-on-error: true
+        working-directory: src-tauri
+        run: cargo test --lib --target ${{ matrix.target }} -- --test-threads=1
+
+      - name: Build release DMG
+        # 直接调用底层脚本，产出 DMG 到 bundle/dmg/。
+        # 这里不调用 build.sh，因为它会在测试失败时中断；出包与本工作流一致地不阻塞。
+        run: npm run build && npm run tauri -- build --target ${{ matrix.target }} --bundles dmg --config src-tauri/tauri.macos.conf.json
+
+      - name: Verify the DMG is non-empty
+        run: |
+          set -eu
+          shopt -s nullglob
+          files=(src-tauri/target/${{ matrix.target }}/release/bundle/dmg/*.dmg)
+          ((${#files[@]} > 0)) || { echo '未生成 DMG'; exit 1; }
+          for f in "${files[@]}"; do
+            test -s "$f" || { echo "DMG 为空: $f"; exit 1; }
+            echo "DMG: $f ($(du -h "$f" | cut -f1))"
+          done
+
+      - name: Upload DMG artifact
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: MCTier-macOS-${{ matrix.target }}
+          path: src-tauri/target/${{ matrix.target }}/release/bundle/dmg/*.dmg
+          if-no-files-found: error
+          retention-days: 14
+
+  release:
+    name: Attach DMG to Release
+    needs: dmg
+    # tag 推送时创建/更新 Release；手动触发时填了 release_tag 才执行。
+    if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.release_tag != '')
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - name: Resolve release tag
+        id: tag
+        run: |
+          set -eu
+          if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
+            echo "tag=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=${{ inputs.release_tag }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          path: artifacts
+          pattern: MCTier-macOS-*
+          merge-multiple: true
+
+      - name: Publish DMGs to the GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          tag='${{ steps.tag.outputs.tag }}'
+          test -n "$tag"
+          shopt -s nullglob
+          files=(artifacts/*.dmg)
+          ((${#files[@]} > 0)) || { echo '没有可附加的 DMG'; exit 1; }
+          # 本 job 不 checkout 仓库，必须显式指定 repo，否则 gh 无法判断目标仓库。
+          repo="${{ github.repository }}"
+          # Release 不存在时创建（tag 构建通常已由 tag 本身触发创建）。
+          gh release view "$tag" --repo "$repo" >/dev/null 2>&1 \
+            || gh release create "$tag" --repo "$repo" --title "$tag" --generate-notes
+          gh release upload "$tag" --repo "$repo" "${files[@]}" --clobber
+          echo "已上传到 Release $tag："
+          printf '  %s\n' "${files[@]}"

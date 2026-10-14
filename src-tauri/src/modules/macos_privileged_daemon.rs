@@ -161,6 +161,8 @@ LOCKED_BIN="$5"
     [ -f "$pidfile" ] || continue
     kill -TERM "$(cat "$pidfile" 2>/dev/null)" 2>/dev/null
   done
+  # 兜底：pid 文件可能丢失（旧版本/异常），再按锁定路径扫一遍残留实例，杜绝孤儿。
+  pkill -TERM -f "$LOCKED_BIN" 2>/dev/null || true
   # 让主循环也退出
   echo "WATCHDOG_EXIT" > "$CMD_FIFO" 2>/dev/null || true
 ) &
@@ -171,6 +173,8 @@ cleanup_all() {
     [ -f "$pidfile" ] || continue
     kill -TERM "$(cat "$pidfile" 2>/dev/null)" 2>/dev/null
   done
+  # 同样按锁定路径兜底清一遍，确保守护进程退出时不留 root 孤儿。
+  pkill -TERM -f "$LOCKED_BIN" 2>/dev/null || true
   kill -TERM "$WATCHDOG" 2>/dev/null
 }
 trap cleanup_all EXIT
@@ -195,6 +199,16 @@ while kill -0 "$APP_PID" 2>/dev/null; do
       start)
         # 固定可执行文件校验：command 字段必须与锁定路径逐字节相等。
         [ "$C_CMD" = "$LOCKED_BIN" ] || continue
+        # 启动新会话前，先终止此前所有残留的 easytier-core：MCTier 同一时间只跑一个
+        # 大厅，多个实例共用 10.126.126.0/24 会抢占内核路由，导致朋友/服务器"不可达"。
+        for _pf in "$RUNTIME_ROOT"/*/pid; do
+          [ -f "$_pf" ] || continue
+          kill -TERM "$(cat "$_pf" 2>/dev/null)" 2>/dev/null
+          rm -f "$_pf"
+        done
+        # 兜底：上一次 app 异常退出留下的孤儿没有 pid 文件（运行目录已被重建），
+        # 按锁定路径再扫一遍，确保本机此刻只有即将启动的这一个实例。
+        pkill -TERM -f "$LOCKED_BIN" 2>/dev/null || true
         SESS_DIR="$RUNTIME_ROOT/$C_TAG"
         OUT_FIFO="$SESS_DIR/stdout.fifo"
         ERR_FIFO="$SESS_DIR/stderr.fifo"
@@ -396,10 +410,32 @@ pub async fn stop_session(tag: &str) -> Result<(), String> {
     };
     let line = format!("{}\tstop\t{}\n", daemon.token, tag);
     write_command(&daemon.command_fifo, &line)?;
-    // 会话目录由守护进程留着 pid 文件，这里顺手清理读取端目录（best-effort）。
-    let session_dir = daemon.runtime_root.join(tag);
-    let _ = std::fs::remove_dir_all(&session_dir);
+    // 不在这里删会话目录：守护进程要靠其中的 pid 文件去 kill easytier-core，
+    // app 退出时的看门狗也依赖它。提前删掉会让 root 进程漏杀、成孤儿、抢占子网路由。
+    // pid 文件由守护进程 kill 后自行 rm；残留空目录在下次 ensure_daemon 时清掉。
     Ok(())
+}
+
+/// 等待守护进程确实终止某会话。守护进程 kill 成功后会 rm 掉 pid 文件，
+/// 因此 pid 文件消失即视为已停止。超时返回 false，让调用方按失败处理。
+pub async fn confirm_session_stopped(tag: &str, timeout: std::time::Duration) -> bool {
+    let pidfile = {
+        let guard = DAEMON.lock().await;
+        match guard.as_ref() {
+            Some(daemon) => daemon.runtime_root.join(tag).join("pid"),
+            None => return true, // 守护进程都没了，无会话可停。
+        }
+    };
+    let deadline = std::time::Instant::now() + timeout;
+    loop {
+        if !pidfile.exists() {
+            return true;
+        }
+        if std::time::Instant::now() >= deadline {
+            return false;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
 }
 
 /// 停止所有活动会话（不需要知道具体 tag）。供「取消连接」这类不持服务锁的路径使用。

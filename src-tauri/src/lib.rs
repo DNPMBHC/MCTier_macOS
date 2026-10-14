@@ -1075,7 +1075,7 @@ fn register_global_hotkeys(
     let ltt = Arc::new(Mutex::new(
         std::time::Instant::now() - std::time::Duration::from_millis(500),
     ));
-    let ltf = Arc::new(Mutex::new((false, false))); // (is_pressed, original_mic_state)
+    let ltf = Arc::new(Mutex::new((false, false))); // (is_pressed, _unused) — PTT 现仅转发按键边沿
 
     // ===== 麦克风开关 =====
     if !mic_hotkey.is_empty() {
@@ -1168,15 +1168,21 @@ fn register_global_hotkeys(
         }
     }
 
-    // ===== 临时开麦（按住说话）=====
+    // ===== 临时开麦（按住说话 / 按键说话）=====
+    //
+    // 两套语义并存，由前端的「语音模式」决定如何响应 ptt-pressed/ptt-released：
+    // - PTT 模式：前端只在按住期间放开音频传输门（track.enabled），松开即静音，
+    //   不触碰麦克风开关状态——真正的「按键说话」。
+    // - 其它模式（兼容旧行为）：前端收到按下/松开后仍按「临时开麦」处理麦克风开关。
+    //
+    // 后端只负责把全局按键的 Pressed/Released 边沿如实抛给前端（窗口无焦点也生效），
+    // 不再自行 toggle_mic——把策略交给前端的 voiceMode，避免两边状态打架。
     if !push_to_talk_hotkey.is_empty() {
-        let cf = Arc::clone(&core);
         let hf = app.clone();
         let ltf2 = Arc::clone(&ltf);
         if let Err(e) =
             app.global_shortcut()
                 .on_shortcut(push_to_talk_hotkey.as_str(), move |_, _, ev| {
-                    let c = Arc::clone(&cf);
                     let h = hf.clone();
                     let lf = Arc::clone(&ltf2);
                     tauri::async_runtime::spawn(async move {
@@ -1184,51 +1190,22 @@ fn register_global_hotkeys(
                             Ok(g) => g,
                             Err(_) => return,
                         };
-
                         if ev.state == tauri_plugin_global_shortcut::ShortcutState::Pressed {
                             if state.0 {
-                                return;
-                            } // 已按下，防重复触发
-                            state.0 = true;
-                            let current_mic_state = c
-                                .lock()
-                                .await
-                                .get_voice_service()
-                                .lock()
-                                .await
-                                .is_mic_enabled();
-                            state.1 = current_mic_state;
-                            drop(state);
-                            if !current_mic_state {
-                                info!("临时开麦：开启麦克风");
-                                match c.lock().await.toggle_mic().await {
-                                    Ok(s) => {
-                                        let _ = h.emit("mic-toggled", s);
-                                    }
-                                    Err(e) => {
-                                        error!("临时开麦开启失败: {}", e);
-                                    }
-                                }
+                                return; // 已按下，防自动重复
                             }
-                        } else if ev.state == tauri_plugin_global_shortcut::ShortcutState::Released
+                            state.0 = true;
+                            drop(state);
+                            let _ = h.emit("ptt-pressed", ());
+                        } else if ev.state
+                            == tauri_plugin_global_shortcut::ShortcutState::Released
                         {
                             if !state.0 {
                                 return;
                             }
-                            let original_state = state.1;
                             state.0 = false;
                             drop(state);
-                            if !original_state {
-                                info!("临时开麦：恢复麦克风状态");
-                                match c.lock().await.toggle_mic().await {
-                                    Ok(s) => {
-                                        let _ = h.emit("mic-toggled", s);
-                                    }
-                                    Err(e) => {
-                                        error!("临时开麦恢复失败: {}", e);
-                                    }
-                                }
-                            }
+                            let _ = h.emit("ptt-released", ());
                         }
                     });
                 })

@@ -356,6 +356,8 @@ pub struct UserConfig {
     pub global_mute_hotkey: Option<String>,
     /// 临时开麦（按住说话）快捷键
     pub push_to_talk_hotkey: Option<String>,
+    /// 语音模式：open=常开 / ptt=按键说话 / vad=声控。缺省 open。
+    pub voice_mode: Option<String>,
     /// 唤出主窗口快捷键（从系统托盘/最小化状态唤回）
     pub summon_hotkey: Option<String>,
     /// 状态窗口位置
@@ -420,6 +422,7 @@ impl Default for UserConfig {
             global_mute_hotkey: Some("Ctrl+T".to_string()),
             push_to_talk_hotkey: Some("F2".to_string()),
             summon_hotkey: Some("Ctrl+Alt+M".to_string()),
+            voice_mode: Some("open".to_string()),
             window_position: Some(WindowPosition::default()),
             audio_device_id: None,
             opacity: Some(0.95),

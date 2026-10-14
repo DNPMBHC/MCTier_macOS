@@ -11,12 +11,14 @@
  */
 
 import React, { useState, useEffect, useRef } from 'react';
-import { Modal, Select, Button, Typography, Space, Progress, message } from 'antd';
+import { Modal, Select, Button, Typography, Space, Progress, Switch, Slider, message } from 'antd';
 import { useTranslation } from 'react-i18next';
 import { tl } from '../../i18n';
 import { audioDevices } from '../../services/voice/audioDevices';
 import { microphoneDevices, nativeMicrophoneLevel, openMicrophone, resumeAudioContext } from '../../services/voice/nativeMicrophone';
 import { microphoneLevelPercent, pcmRms } from '../../services/voice/microphoneLevel';
+import { macHeadphoneMode, setMacHeadphoneMode, macOutputIsSpeaker, macMicGain, setMacMicGain, MAC_MIC_GAIN_MIN, MAC_MIC_GAIN_MAX } from '../../services/voice/macEchoMode';
+import { isMacOSPlatform } from '../../utils/platform';
 import { webrtcClient } from '../../services';
 
 const { Text } = Typography;
@@ -41,6 +43,10 @@ export const VoiceDevicePanel: React.FC<VoiceDevicePanelProps> = ({ active = tru
   const [inputId, setInputId] = useState<string>('');
   const [outputId, setOutputId] = useState<string>('');
   const [supportsOutput, setSupportsOutput] = useState(true);
+  // macOS 专属：耳机低延迟模式（关掉平台音频处理，断开 VPIO 全双工耦合）
+  const [headphoneMode, setHeadphoneMode] = useState(macHeadphoneMode());
+  // 低延迟模式关掉了平台 AGC，音量由这个软件增益决定。
+  const [micGain, setMicGain] = useState(macMicGain());
 
   // 麦克风试音电平
   const [testing, setTesting] = useState(false);
@@ -143,6 +149,20 @@ export const VoiceDevicePanel: React.FC<VoiceDevicePanelProps> = ({ active = tru
       await webrtcClient.applyOutputDeviceToAll(id);
       setOutputId(id);
       audioDevices.setOutputDeviceId(id, outputs.find((option) => option.value === id)?.label || '');
+      // 切到外放扬声器时必须关掉耳机低延迟模式（外放无 AEC 会回声），避免用户忘记后误判。
+      // 在写入新设备 id 之后再判断，macOutputIsSpeaker 才能读到正确的当前输出。
+      if (isMacOSPlatform && headphoneMode && (await macOutputIsSpeaker())) {
+        setHeadphoneMode(false);
+        setMacHeadphoneMode(false);
+        void webrtcClient.refreshMicrophoneProcessing().catch(() => undefined);
+        message.warning(
+          tl(
+            '已切换到扬声器，耳机低延迟模式已自动关闭（外放需要回声消除）。',
+            'Switched to speakers; headphone low-latency mode was turned off automatically (speakers need echo cancellation).',
+          ),
+        );
+        return;
+      }
       message.success(tl('扬声器已切换并对当前通话生效', 'Speaker switched and applied to the current call'));
     } catch (error) {
       await webrtcClient.applyOutputDeviceToAll(previous).catch(() => {});
@@ -277,6 +297,83 @@ export const VoiceDevicePanel: React.FC<VoiceDevicePanelProps> = ({ active = tru
           </div>
         )}
       </div>
+
+      {isMacOSPlatform && (
+        <div>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+            <Text strong>{tl('耳机低延迟模式', 'Headphone Low-Latency Mode')}</Text>
+            <Switch
+              checked={headphoneMode}
+              onChange={value => {
+                void (async () => {
+                  // 防呆：外放扬声器必须保留 AEC，否则对方会听到回声。开启前先确认输出不是扬声器，
+                  // 是则拒绝开启并说明原因，避免「忘了关 + 外放」这个最糟组合。
+                  if (value && (await macOutputIsSpeaker())) {
+                    setHeadphoneMode(false);
+                    setMacHeadphoneMode(false);
+                    message.warning(
+                      tl(
+                        '检测到当前使用外放扬声器，无法开启低延迟模式：外放必须保留回声消除，否则对方会听到回声。请先切换到耳机。',
+                        'Speakers detected; low-latency mode cannot be enabled. Speakers require echo cancellation or others will hear an echo. Switch to headphones first.',
+                      ),
+                    );
+                    return;
+                  }
+                  setHeadphoneMode(value);
+                  setMacHeadphoneMode(value);
+                  await webrtcClient.refreshMicrophoneProcessing().catch(() =>
+                    message.error(tl('切换失败，请重新开启麦克风使其生效', 'Switch failed; re-enable the microphone to apply')),
+                  );
+                })();
+              }}
+            />
+          </div>
+          <div style={{ marginTop: 4 }}>
+            <Text type="secondary" style={{ fontSize: 12 }}>
+              {headphoneMode
+                ? tl(
+                    '已开启：当前使用耳机时更流畅，但对方外放时会听到回声。重启软件会自动恢复关闭；若改用外放请手动关闭。',
+                    'On: smoother while you wear headphones, but others on speakers will hear an echo. Restarting restores the default; turn this off if you switch to speakers.',
+                  )
+                : tl(
+                    '戴耳机时如果语音卡顿才打开：关闭回声消除换取流畅的双向通话。使用外放扬声器请保持关闭，否则对方会听到回声。重启软件后本开关自动回到关闭。',
+                    'Turn on only if voice stutters while wearing headphones: disables echo cancellation for smoother two-way audio. Keep off when using speakers, otherwise others hear an echo. This resets to off after a restart.',
+                  )}
+            </Text>
+          </div>
+          {headphoneMode && (
+            <div style={{ marginTop: 10 }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+                <Text>{tl('麦克风音量', 'Microphone Level')}</Text>
+                <Text type="secondary" style={{ fontSize: 12 }}>{`${micGain.toFixed(1)}×`}</Text>
+              </div>
+              {/* 低延迟模式关掉了平台的自动增益，音量改由这里的软件增益决定。
+                  对方觉得声音小就调大；出现破音/爆音则调小。 */}
+              <Slider
+                min={MAC_MIC_GAIN_MIN}
+                max={MAC_MIC_GAIN_MAX}
+                step={0.5}
+                value={micGain}
+                onChange={value => {
+                  setMicGain(value);
+                  setMacMicGain(value);
+                }}
+                onChangeComplete={() => {
+                  void webrtcClient
+                    .refreshMicrophoneProcessing()
+                    .catch(() => message.error(tl('应用失败，请重新开启麦克风使其生效', 'Failed to apply; re-enable the microphone to take effect')));
+                }}
+              />
+              <Text type="secondary" style={{ fontSize: 12 }}>
+                {tl(
+                  '对方听不清就调大，出现破音就调小。',
+                  'Raise if others can barely hear you; lower if the audio distorts.',
+                )}
+              </Text>
+            </div>
+          )}
+        </div>
+      )}
     </Space>
   );
 };

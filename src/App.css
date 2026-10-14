@@ -1598,3 +1598,28 @@ html[data-theme='light'] :is(
   backdrop-filter: none !important;
   -webkit-backdrop-filter: none !important;
 }
+
+/* 全屏主视图上的 backdrop-filter：这些容器背景已是 0.96~0.98 的近实色，模糊看不出来，
+   但 WKWebView 仍会为每一帧做一次整视口的离屏合成，是 Mac 上滚动/切换掉帧的主因之一。
+   macOS 下一律去掉这些整面模糊（视觉无损），功能性毛玻璃小面板不受影响。 */
+:root[data-platform='macos'] .chat-room-view,
+:root[data-platform='macos'] .file-share-view,
+:root[data-platform='macos'] .screen-share-view,
+:root[data-platform='macos'] .version-error-overlay,
+:root[data-platform='macos'] .reconnect-modal .ant-modal-content {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+/* macOS：默认收敛全部 backdrop-filter（毛玻璃）。
+   WKWebView 的 backdrop-filter 需要在每个合成帧重新采样背后内容，只要其后方/内部有滚动、
+   动画或视频就会持续重算——这是 Mac 上界面卡顿的主要来源（Chromium 代价小得多）。
+   这与「关闭 GPU 渲染」时已经存在的回退是同一套取舍，只是改为 macOS 默认开启：
+   相关面板本身都带有 rgba/渐变底色，去掉模糊后仍然清晰可读，只是少了毛玻璃质感。
+   需要毛玻璃观感时可在设置里开启 GPU 渲染并接受相应掉帧。 */
+:root[data-platform='macos'] *,
+:root[data-platform='macos'] *::before,
+:root[data-platform='macos'] *::after {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}

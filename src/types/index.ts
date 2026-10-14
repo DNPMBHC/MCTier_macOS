@@ -123,6 +123,8 @@ export interface UserConfig {
   globalMuteHotkey?: string;
   /** F2临时开麦快捷键 */
   pushToTalkHotkey?: string;
+  /** 语音模式：open=常开 / ptt=按键说话 / vad=声控 */
+  voiceMode?: 'open' | 'ptt' | 'vad';
   /** 窗口位置 */
   windowPosition?: WindowPosition;
   /** 音频设备 ID */

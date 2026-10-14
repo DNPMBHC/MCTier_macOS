@@ -2016,18 +2016,33 @@ impl NetworkService {
         #[cfg(target_os = "macos")]
         let graceful_shutdown_success = {
             let tag = self.macos_daemon_tag.lock().await.take();
+            let mut success = true;
             if let Some(tag) = tag {
                 log::info!("🔄 [StopEasyTier] 请求守护进程停止会话 tag={}", tag);
                 if let Err(e) = macos_privileged_daemon::stop_session(&tag).await {
                     log::warn!("⚠️ [StopEasyTier] 向守护进程发送停止指令失败: {}", e);
+                    success = false;
+                } else {
+                    // 不再写完 FIFO 就假装成功：实际确认 easytier-core 已退出（pid 文件消失）。
+                    // 否则 root 进程会漏杀成孤儿，多实例抢占 10.126.126.0/24 子网路由，导致不可达。
+                    log::info!("🔄 [StopEasyTier] 等待守护进程确认 EasyTier 退出（最多8秒）...");
+                    success = macos_privileged_daemon::confirm_session_stopped(
+                        &tag,
+                        Duration::from_secs(8),
+                    )
+                    .await;
+                    if success {
+                        log::info!("✅ [StopEasyTier] 守护进程已确认 EasyTier 退出");
+                    } else {
+                        log::warn!("⚠️ [StopEasyTier] 等待 EasyTier 退出超时（8秒），可能残留 root 进程");
+                    }
                 }
             } else {
                 log::info!("ℹ️ [StopEasyTier] EasyTier 服务未运行，无需关闭");
             }
-            // 守护进程收到 stop 后异步终止子进程，这里不持有子进程句柄，直接视为成功；
-            // stderr FIFO 的 EOF monitor 会把运行状态收敛为断开。
+            // stderr FIFO 的 EOF monitor 也会把运行状态收敛为断开，这里直接置位兜底。
             *self.is_running.lock().await = false;
-            true
+            success
         };
 
         #[cfg(target_os = "linux")]

@@ -24,6 +24,8 @@ import { VersionUpdateModal } from './components/VersionUpdateModal';
 import { useAppStore, initializeStore } from './stores';
 import { hotkeyManager, webrtcClient, audioService, fileShareService } from './services';
 import { speakingDetector } from './services/voice/SpeakingDetector';
+import { voiceMode, normalizeVoiceMode } from './services/voice/voiceMode';
+import { resetMacHeadphoneModeOnStartup } from './services/voice/macEchoMode';
 import { useStartupUpdates, startupVersionStage } from './services/version/startupUpdates';
 import { DOWNLOAD_WEBSITE } from './services/version/versionPolicy';
 import { parseLobbyInviteLink } from './services/lobby/lobbyInvite';
@@ -207,6 +209,34 @@ function MainWindowApp() {
       }
     }).then((off) => { unlisten = off; });
     return () => { if (unlisten) unlisten(); };
+  }, []);
+
+  // 语音模式：PTT 全局按键（后端转发的 ptt-pressed/ptt-released）与配置里的默认模式。
+  // 常开/声控模式下按键也转发，但只有 PTT 模式会真正据此放行传输。
+  useEffect(() => {
+    // macOS：耳机低延迟模式不跨启动保留。旧版本曾把它持久化，升级用户会残留 'on'，
+    // 导致「忘记关」并误以为软件出问题。这里每次启动清一次，回到安全默认（关闭）。
+    resetMacHeadphoneModeOnStartup();
+    const offs: Array<() => void> = [];
+    const setup = async () => {
+      try {
+        const settings = await invoke<{ voiceMode?: string }>('get_settings');
+        voiceMode.setMode(normalizeVoiceMode(settings.voiceMode));
+      } catch (error) {
+        console.warn('读取语音模式失败，使用常开:', error);
+      }
+      offs.push(await listen('ptt-pressed', () => voiceMode.setPttHeld(true)));
+      offs.push(await listen('ptt-released', () => voiceMode.setPttHeld(false)));
+      // 设置页改模式后广播，立即生效。
+      const onModeChange = (e: Event) => {
+        const detail = (e as CustomEvent<string>).detail;
+        voiceMode.setMode(normalizeVoiceMode(detail));
+      };
+      window.addEventListener('mctier-voice-mode-changed', onModeChange as EventListener);
+      offs.push(() => window.removeEventListener('mctier-voice-mode-changed', onModeChange as EventListener));
+    };
+    void setup();
+    return () => { offs.forEach((off) => off()); };
   }, []);
 
   // 同步系统托盘菜单文本到当前界面语言（启动时 + 语言切换时）
@@ -693,9 +723,13 @@ function MainWindowApp() {
             updatePlayerStatus(playerId, { micEnabled });
           });
 
-          // 说话状态检测：分析结果写入 store，用于 UI 高亮
+          // 说话状态检测：分析结果写入 store，用于 UI 高亮；
+          // 本机说话状态额外喂给语音模式控制器，供「声控(VAD)」模式决定是否放行传输。
           speakingDetector.setCallback((playerId, speaking) => {
             setPlayerSpeaking(playerId, speaking);
+            if (playerId === useAppStore.getState().currentPlayerId) {
+              voiceMode.setSpeaking(speaking);
+            }
           });
 
           webrtcClient.onRemoteStream((playerId, stream) => {

@@ -2,6 +2,7 @@ import { invoke, isTauri } from '@tauri-apps/api/core';
 import workletUrl from './nativeMicrophoneWorklet.js?url&no-inline';
 import { pcmRms } from './microphoneLevel';
 import { isMacOSPlatform } from '../../utils/platform';
+import { macHeadphoneMode, macMicGain } from './macEchoMode';
 
 const nativeLevels = new WeakMap<MediaStream, number>();
 /** Undefined for browser streams; native values come directly from WASAPI PCM. */
@@ -38,13 +39,84 @@ export async function microphoneDevices(): Promise<MicrophoneDevice[]> {
   return (await navigator.mediaDevices.enumerateDevices()).filter(device => device.kind === 'audioinput');
 }
 
-/** 浏览器采集。平台没有原生实现时用它；macOS 上原生单元打不开时也用它兜底。 */
-function openBrowserMicrophone(deviceId: string, systemProcessing: boolean): Promise<MediaStream> {
-  return navigator.mediaDevices.getUserMedia({ audio: {
-    ...(deviceId ? { deviceId: { ideal: deviceId } } : {}),
-    echoCancellation: true, noiseSuppression: systemProcessing, autoGainControl: true,
-  }, video: false });
+/**
+ * macOS「耳机低延迟模式」的软件增益级。
+ *
+ * 关掉平台音频处理会同时失去 macOS 只在 VPIO 单元里提供的 AGC，原始麦克风信号因此明显
+ * 偏小（用户实测：电平条有跳动，但对方听不清）。这里用一个完全由我们掌控的增益级补回：
+ * 固定增益 → 压缩器限幅，等效一个简易 AGC——小信号被抬起，峰值被压住，不会削顶失真。
+ *
+ * 返回的轨道保留原始流的 deviceId（供调用方比对设备），并接管 stop()，让上层照常
+ * 停止麦克风时会一并释放底层采集与音频图。
+ */
+function applyMacMicrophoneGain(raw: MediaStream, gain: number): MediaStream {
+  const AC = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+  const ctx = new AC();
+  const source = ctx.createMediaStreamSource(raw);
+  const boost = ctx.createGain();
+  boost.gain.value = gain;
+  const limiter = ctx.createDynamicsCompressor();
+  // 阈下线性放大、阈上压缩：人声自然，峰值受控（避免增益后削顶）。
+  limiter.threshold.value = -18;
+  limiter.knee.value = 12;
+  limiter.ratio.value = 4;
+  limiter.attack.value = 0.003;
+  limiter.release.value = 0.25;
+  const dest = ctx.createMediaStreamDestination();
+  dest.channelCount = 1;
+  source.connect(boost);
+  boost.connect(limiter);
+  limiter.connect(dest);
+  // 打开麦克风是明确的用户手势，直接恢复，避免 MediaStreamDestination 在挂起时静音。
+  void ctx.resume().catch(() => {});
+
+  const outTrack = dest.stream.getAudioTracks()[0];
+  const rawTrack = raw.getAudioTracks()[0];
+  // 先读原始 deviceId 再改写 getSettings：若两者恰好是同一轨道对象，改写后再读会自我递归。
+  const rawDeviceId = rawTrack?.getSettings().deviceId ?? '';
+  const settings = outTrack.getSettings.bind(outTrack);
+  outTrack.getSettings = () => ({ ...settings(), deviceId: rawDeviceId });
+  const rawStop = rawTrack?.stop.bind(rawTrack);
+  outTrack.stop = () => {
+    raw.getTracks().forEach(track => track.stop());
+    try { source.disconnect(); } catch { /* ignore */ }
+    try { void ctx.close(); } catch { /* ignore */ }
+    rawStop?.();
+  };
+  // 设备被拔掉/系统关闭麦克风时，原始轨道结束也要让处理后的轨道一起结束。
+  rawTrack?.addEventListener('ended', () => { outTrack.stop(); outTrack.dispatchEvent(new Event('ended')); }, { once: true });
+  return dest.stream;
 }
+
+/** 浏览器采集。平台没有原生实现时用它；macOS 上原生单元打不开时也用它兜底。 */
+async function openBrowserMicrophone(deviceId: string, systemProcessing: boolean): Promise<MediaStream> {
+  const audio: MediaTrackConstraints = deviceId ? { deviceId: { ideal: deviceId } } : {};
+  const headphoneMode = isMacOSPlatform && macHeadphoneMode();
+  if (headphoneMode) {
+    // macOS「耳机低延迟模式」：三项平台处理全部关闭。只要有一项为 true，WebKit 就可能启用
+    // Apple 的 VPIO 全双工单元——它把采集与播放耦合进同一处理周期，双向同时收发时成为
+    // 瓶颈、导致卡顿（单向正常）。戴耳机没有外放→麦克风的回声通路，AEC 本就不需要。
+    // 代价是同时失去平台的 AGC/降噪，因此下面用软件增益级补回音量（见 applyMacMicrophoneGain）。
+    audio.echoCancellation = false;
+    audio.autoGainControl = false;
+    audio.noiseSuppression = false;
+  } else {
+    // 默认（含外放扬声器）：开 AEC 消除「扬声器→麦克风」回声，AGC/降噪由平台提供。
+    audio.echoCancellation = true;
+    audio.noiseSuppression = systemProcessing;
+    audio.autoGainControl = true;
+  }
+  const raw = await navigator.mediaDevices.getUserMedia({ audio, video: false });
+  if (!headphoneMode) return raw;
+  try {
+    return applyMacMicrophoneGain(raw, macMicGain());
+  } catch (error) {
+    // 软件增益不可用时退回原始采集：音量偏小也好过拿不到麦克风。
+    console.warn('macOS 软件麦克风增益不可用，使用原始采集:', error);
+    return raw;
+  }
+}
+
 
 export async function openMicrophone(deviceId = '', systemProcessing = true, loopback = false, recording = false): Promise<MediaStream> {
   // macOS：麦克风采集直接走 WKWebView 的 getUserMedia，不碰原生 CoreAudio 单元。
