@@ -46,7 +46,11 @@ fn open_log_folder_impl() -> AppResult<()> {
     {
         // macOS 用 open（Finder），Linux 用 xdg-open；路径由 app_paths 决定，不受输入控制。
         use std::process::Command;
-        let opener = if cfg!(target_os = "macos") { "open" } else { "xdg-open" };
+        let opener = if cfg!(target_os = "macos") {
+            "open"
+        } else {
+            "xdg-open"
+        };
         let opener = unix_system_command(opener).map_err(AppError::ProcessError)?;
         Command::new(opener)
             .arg(&log_path)
@@ -75,7 +79,11 @@ fn open_log_file_impl() -> AppResult<()> {
     {
         // 交给系统默认文本处理器：macOS 是 open，Linux 是 xdg-open。
         use std::process::Command;
-        let opener = if cfg!(target_os = "macos") { "open" } else { "xdg-open" };
+        let opener = if cfg!(target_os = "macos") {
+            "open"
+        } else {
+            "xdg-open"
+        };
         let opener = unix_system_command(opener).map_err(AppError::ProcessError)?;
         Command::new(opener)
             .arg(&log_path)

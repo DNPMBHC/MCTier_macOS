@@ -1,0 +1,117 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "MCTier",
+  "version": "3.10.0",
+  "identifier": "com.mctier.app",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../../dist"
+  },
+  "app": {
+    "macOSPrivateApi": true,
+    "windows": [
+      {
+        "title": "MCTier",
+        "width": 420,
+        "height": 680,
+        "minWidth": 360,
+        "minHeight": 480,
+        "center": true,
+        "resizable": true,
+        "decorations": true,
+        "transparent": false,
+        "titleBarStyle": "Overlay",
+        "hiddenTitle": true,
+        "trafficLightPosition": {
+          "x": 16,
+          "y": 14
+        },
+        "alwaysOnTop": false,
+        "visible": true,
+        "fullscreen": false,
+        "maximizable": true,
+        "zoomHotkeysEnabled": true,
+        "devtools": true
+      }
+    ],
+    "security": {
+      "csp": {
+        "default-src": ["'self'"],
+        "script-src": ["'self'", "'wasm-unsafe-eval'"],
+        "style-src": ["'self'", "'unsafe-inline'"],
+        "img-src": ["'self'", "data:", "blob:", "asset:", "http://asset.localhost"],
+        "media-src": ["'self'", "data:", "blob:", "asset:", "http://asset.localhost"],
+        "font-src": ["'self'", "data:", "blob:"],
+        "worker-src": ["'self'", "blob:"],
+        "connect-src": [
+          "'self'",
+          "ipc:",
+          "http://ipc.localhost",
+          "data:",
+          "blob:",
+          "asset:",
+          "http://asset.localhost",
+          "ws:",
+          "wss:",
+          "http://*:14540",
+          "https://gitee.com"
+        ],
+        "frame-src": ["'self'", "blob:", "asset:", "http://asset.localhost", "https://uop.quark.cn"],
+        "object-src": ["'none'"],
+        "base-uri": ["'self'"],
+        "form-action": ["'none'"]
+      },
+      "dangerousDisableAssetCspModification": ["style-src"],
+      "assetProtocol": {
+        "enable": true,
+        "scope": [
+          "$APPCACHE/emoji-builtin-v3/**",
+          "$APPCACHE/chat-attachments/**",
+          "$APPCACHE/office-previews/**"
+        ]
+      }
+    },
+    "withGlobalTauri": false
+  },
+  "plugins": {
+    "shell": {
+      "open": "https://(?:mctier\\.pmhs\\.top|www\\.mcmod\\.cn|github\\.com|gitee\\.com|webrtc\\.googlesource\\.com|www\\.wintun\\.net|reqrypt\\.org|npcap\\.com|langlangy\\.cn)(?:[/?#][^\\s]*)?\\z"
+    },
+    "deep-link": {
+      "desktop": {
+        "schemes": ["mctier"]
+      }
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["dmg", "app"],
+    "icon": [
+      "../../src-tauri/icons/32x32.png",
+      "../../src-tauri/icons/64x64.png",
+      "../../src-tauri/icons/128x128.png",
+      "../../src-tauri/icons/128x128@2x.png",
+      "../../src-tauri/icons/icon.icns"
+    ],
+    "macOS": {
+      "minimumSystemVersion": "11.0",
+      "signingIdentity": null,
+      "providerShortName": null,
+      "entitlements": null
+    },
+    "externalBin": [],
+    "resources": {
+      "../../LICENSE": "licenses/LICENSE",
+      "../../THIRD_PARTY_NOTICES.md": "licenses/THIRD_PARTY_NOTICES.md",
+      "../../licenses/*": "licenses/",
+      "../../patches/easytier-2.6.0-mctier-android.patch": "licenses/patches/easytier-2.6.0-mctier-android.patch",
+      "../../shared/builtin-emoji/builtin-v3.pack.gz": "builtin-emoji/builtin-v3.pack.gz",
+      "../../src-tauri/resources/binaries/macos": "binaries/macos"
+    },
+    "copyright": "Copyright © 2024-2026 QingYun Studio_PengMingHang (MCTier Team)",
+    "category": "Game",
+    "shortDescription": "虚拟局域网通用联机工具（macOS）"
+  }
+}

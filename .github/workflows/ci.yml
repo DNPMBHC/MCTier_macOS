@@ -50,8 +50,15 @@ jobs:
         with:
           components: rustfmt
       - name: Check refactored Rust formatting
-        working-directory: src-tauri
-        run: rustfmt --edition 2021 --check src/command_registry.rs src/modules/app_core.rs src/modules/error.rs src/modules/logs.rs src/modules/tauri_commands/logging.rs
+        run: rustfmt --edition 2021 --check src-tauri/src/command_registry.rs src-tauri/src/modules/app_core.rs crates/mctier-core/src/error.rs crates/mctier-core/src/logs.rs src-tauri/src/modules/tauri_commands/logging.rs crates/mctier-platform/src/lib.rs crates/mctier-platform-macos/src/lib.rs crates/mctier-platform-windows/src/lib.rs crates/mctier-platform-linux/src/lib.rs
+      - name: Check mctier-core and mctier-platform remain free of raw OS SDK imports
+        shell: pwsh
+        run: |
+          $hits = Select-String -Path crates/mctier-core/src/*.rs,crates/mctier-platform/src/*.rs -Pattern '\b(windows::Win32|windows_sys|objc2|core_graphics|core_foundation|webkit2gtk)\b'
+          if ($hits) {
+            $hits | ForEach-Object { Write-Error $_ }
+            throw 'Platform SDK imports are forbidden in mctier-core and mctier-platform'
+          }
       - name: Check lockfile is present
         shell: pwsh
         # workspace 化后 lockfile 位于仓库根。

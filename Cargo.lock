@@ -3254,6 +3254,36 @@ dependencies = [
 ]
 
 [[package]]
+name = "mctier-app-linux"
+version = "3.10.0"
+dependencies = [
+ "mctier",
+ "mctier-core",
+ "mctier-platform",
+ "mctier-platform-linux",
+]
+
+[[package]]
+name = "mctier-app-macos"
+version = "3.10.0"
+dependencies = [
+ "mctier",
+ "mctier-core",
+ "mctier-platform",
+ "mctier-platform-macos",
+]
+
+[[package]]
+name = "mctier-app-windows"
+version = "3.10.0"
+dependencies = [
+ "mctier",
+ "mctier-core",
+ "mctier-platform",
+ "mctier-platform-windows",
+]
+
+[[package]]
 name = "mctier-core"
 version = "3.10.0"
 dependencies = [

@@ -1,7 +1,7 @@
-// Run from src-tauri: cargo test --test native_security
+// Run from workspace root or src-tauri: cargo test --test native_security
 #[path = "../src/modules/helper_handshake.rs"]
 mod helper_handshake;
-#[path = "../src/modules/hosts_security.rs"]
+#[path = "../../crates/mctier-core/src/hosts_security.rs"]
 mod hosts_security;
-#[path = "../src/modules/virtual_network.rs"]
+#[path = "../../crates/mctier-core/src/virtual_network.rs"]
 mod virtual_network;

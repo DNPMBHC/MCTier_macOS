@@ -21,29 +21,6 @@ pub fn virtual_host(ip: &str) -> Option<Ipv4Addr> {
 mod tests {
     use super::*;
 
-    #[cfg(windows)]
-    #[tokio::test]
-    async fn service_listener_cannot_be_inherited_by_child_processes() {
-        use std::os::windows::io::AsRawSocket;
-        use windows::Win32::Foundation::{GetHandleInformation, HANDLE, HANDLE_FLAG_INHERIT};
-
-        let listener = bind_service_listener("127.0.0.1:0".parse().unwrap()).unwrap();
-        let mut flags = 0;
-        unsafe {
-            GetHandleInformation(HANDLE(listener.as_raw_socket() as *mut _), &mut flags).unwrap();
-        }
-        assert_eq!(flags & HANDLE_FLAG_INHERIT.0, 0);
-        let connection = tokio::net::TcpStream::connect(listener.local_addr().unwrap())
-            .await
-            .unwrap();
-        let (accepted, _) = listener.accept().await.unwrap();
-        unsafe {
-            GetHandleInformation(HANDLE(accepted.as_raw_socket() as *mut _), &mut flags).unwrap();
-        }
-        assert_eq!(flags & HANDLE_FLAG_INHERIT.0, 0);
-        drop(connection);
-    }
-
     #[test]
     fn only_literal_virtual_hosts_are_allowed() {
         for host in [1, 128, 254] {

@@ -138,7 +138,10 @@ mod tests {
         let (title, body) = NOTIFIER.default_background_notice();
         assert!(!title.is_empty());
         assert!(body.contains("菜单栏"), "应提及顶部菜单栏: {body}");
-        assert!(!body.contains("右下角"), "不得残留 Windows 右下角托盘文案: {body}");
+        assert!(
+            !body.contains("右下角"),
+            "不得残留 Windows 右下角托盘文案: {body}"
+        );
     }
 
     #[test]

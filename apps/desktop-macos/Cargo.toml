@@ -1,0 +1,17 @@
+[package]
+name = "mctier-app-macos"
+version = "3.10.0"
+description = "MCTier macOS 独立应用壳（编译期不链接任何 Windows/Linux 专属 crate）"
+authors = ["MCTier Team"]
+edition = "2021"
+publish = false
+
+[[bin]]
+name = "mctier-macos"
+path = "src/main.rs"
+
+[dependencies]
+mctier-core = { path = "../../crates/mctier-core" }
+mctier-platform = { path = "../../crates/mctier-platform" }
+mctier-platform-macos = { path = "../../crates/mctier-platform-macos" }
+mctier = { path = "../../src-tauri" }
