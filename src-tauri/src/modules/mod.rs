@@ -1,10 +1,9 @@
 // MCTier 后端模块
 // 本文件作为后端模块的入口点，用于组织和导出各个子模块
 
-// 错误处理模块
-pub mod error;
-pub mod app_paths;
-pub mod logs;
+// 错误处理 / 应用路径 / 日志：已迁往 mctier-core（平台无关核心）。
+// 在旧路径上重导出，使现有 `crate::modules::X` 引用无需改动，迁移得以分批验证。
+pub use mctier_core::{app_paths, error, logs};
 
 // 配置管理模块
 pub mod config_manager;
@@ -58,8 +57,8 @@ pub mod easytier_advanced_commands;
 // Tauri 事件推送模块
 pub mod tauri_events;
 
-// 局域网 HTTP 服务的 CORS 策略（文件共享 / P2P 聊天共用）
-pub mod http_cors;
+// 局域网 HTTP 服务的 CORS 策略（文件共享 / P2P 聊天共用）：已迁往 mctier-core。
+pub use mctier_core::http_cors;
 
 // 高性能文件传输模块
 pub mod file_transfer;
@@ -67,9 +66,9 @@ pub mod file_transfer;
 // P2P聊天服务模块
 pub mod chat_service;
 
-// 聊天鉴权：每成员密钥对 + 请求签名（消除虚拟IP伪造空间）
+// 聊天鉴权：每成员密钥对 + 请求签名（消除虚拟IP伪造空间）——已迁往 mctier-core。
 pub mod builtin_emoji;
-pub mod chat_auth;
+pub use mctier_core::chat_auth;
 pub mod secret_store;
 
 // Minecraft 局域网世界自动发现模块

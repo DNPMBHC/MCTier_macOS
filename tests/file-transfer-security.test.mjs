@@ -2,8 +2,9 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import test from 'node:test';
 import { readTauriCommandSources } from './helpers/tauriCommandsSource.mjs';
+import { readRustModule } from './helpers/rustSource.mjs';
 
-const rustServer = fs.readFileSync(new URL('../src-tauri/src/modules/file_transfer.rs', import.meta.url), 'utf8');
+const rustServer = readRustModule('file_transfer');
 const rustCommands = readTauriCommandSources();
 const androidServer = fs.readFileSync(new URL('../MCTier-Android/app/src/main/java/top/pmh13/mctier/network/FileShareHttpServer.kt', import.meta.url), 'utf8');
 const androidClient = fs.readFileSync(new URL('../MCTier-Android/app/src/main/java/top/pmh13/mctier/network/RemoteFileClient.kt', import.meta.url), 'utf8');

@@ -20,6 +20,9 @@ embed-resource = "3"
 
 [dependencies]
 tauri = { version = "2", features = ["tray-icon", "protocol-asset", "macos-private-api"] }
+# 平台无关核心（错误/日志/应用路径/CORS/聊天鉴权）。平台无关模块迁往这里，
+# 以避免 macOS 壳与 Windows/Linux 各自重复实现。
+mctier-core = { path = "../crates/mctier-core" }
 tauri-plugin-shell = "2"
 tauri-plugin-global-shortcut = "2"
 tauri-plugin-clipboard-manager = "2"
@@ -135,6 +138,9 @@ windows = { version = "0.58", features = [
 # 发布构建的 strip 已上移到仓库根的 [profile.release]：作为 workspace 成员，这里的
 # [profile.*] 会被 cargo 忽略（并产生警告），因此不再在本文件重复声明。
 [dev-dependencies]
+# 本 crate 的测试要构建 mctier-core 的测试捷径（等价于它还在同一 crate 时的 cfg(test)）。
+# 否则 chat_auth 会走真实系统钥匙串：既是副作用，也让测试结果依赖开发机状态。
+mctier-core = { path = "../crates/mctier-core", features = ["test-identity"] }
 proptest = "1"
 tempfile = "3"
 # 仅测试需要：tower 的 util 特性提供 ServiceExt::oneshot，用于直接驱动 axum Router 断言 CORS 响应头

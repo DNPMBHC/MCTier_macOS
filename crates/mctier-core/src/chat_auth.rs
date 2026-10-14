@@ -308,7 +308,15 @@ impl ChatSigner {
 
     /// The private scalar never crosses the native/frontend boundary. A locked
     /// or damaged credential fails closed instead of silently changing identity.
-    #[cfg(not(test))]
+    ///
+    /// 测试构建下改用每次新生成的身份（见下方 cfg）：单元测试不应读写开发者的
+    /// 登录钥匙串——那既是副作用，并行执行时也会偶发失败。
+    ///
+    /// 注意这里同时判 `test` 与 `test-identity` feature：`cfg(test)` 只在本 crate
+    /// 自己的测试构建里生效，**对依赖方无效**。本模块迁到 core 之后，依赖方（桌面壳）
+    /// 的测试仍需要这条捷径，因此额外提供 feature，由依赖方在 [dev-dependencies]
+    /// 中开启（等价于原来同 crate 内 cfg(test) 的效果）。
+    #[cfg(not(any(test, feature = "test-identity")))]
     pub fn local_identity() -> Result<Self, String> {
         let entry = keyring::Entry::new("MCTier", "chat-identity-p256-v1")
             .map_err(|_| "Cannot open chat identity credential")?;
@@ -327,7 +335,7 @@ impl ChatSigner {
         }
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-identity"))]
     pub fn local_identity() -> Result<Self, String> {
         Self::generate()
     }

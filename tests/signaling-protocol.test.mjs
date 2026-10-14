@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+// Rust 模块按名字解析：平台化重构会把模块搬进 crates/，测试不应跟着改路径。
+import { readRustModule } from './helpers/rustSource.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const protocolPath = path.join(root, 'shared', 'signaling-protocol.json');
@@ -86,10 +88,7 @@ test('WebRTCClient reads the signaling protocol version from the shared manifest
 });
 
 test('desktop and Android signing versions agree with the shared manifest', () => {
-  const rustSource = fs.readFileSync(
-    path.join(root, 'src-tauri', 'src', 'modules', 'chat_auth.rs'),
-    'utf8'
-  );
+  const rustSource = readRustModule('chat_auth');
   const androidSource = fs.readFileSync(
     path.join(
       root,

@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { build } from 'esbuild';
+import { readRustModule } from './helpers/rustSource.mjs';
 
 /** 用指定的 navigator.platform 打包并加载 platform.ts，取其平台缺省值。 */
 async function loadDefaultCloseToTray(platform) {
@@ -25,7 +26,7 @@ test('关闭时最小化到托盘：macOS 缺省开启，其他平台保持关�
 });
 
 test('前端平台缺省与后端 default_close_to_tray 用同一条规则', () => {
-  const rust = readFileSync(new URL('../src-tauri/src/modules/config_manager.rs', import.meta.url), 'utf8');
+  const rust = readRustModule('config_manager');
   const helper = rust.match(/pub const fn default_close_to_tray\(\) -> bool \{\s*cfg!\(target_os = "macos"\)\s*\}/);
   assert.ok(helper, 'config_manager 必须提供按平台判定的 default_close_to_tray()');
   // 结构体默认值跟着平台走，首次写入的配置文件才不会把 macOS 钉死在「关闭即退出」上。

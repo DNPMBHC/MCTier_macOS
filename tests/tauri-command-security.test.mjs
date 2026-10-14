@@ -4,12 +4,13 @@ import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { readTauriCommandSources } from './helpers/tauriCommandsSource.mjs';
+import { readRustModule } from './helpers/rustSource.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const read = (relativePath) => fs.readFileSync(path.join(root, relativePath), 'utf8');
 
 const commands = readTauriCommandSources();
-const configManager = read('src-tauri/src/modules/config_manager.rs');
+const configManager = readRustModule('config_manager');
 const cargoManifest = read('src-tauri/Cargo.toml');
 const capability = JSON.parse(read('src-tauri/capabilities/default.json'));
 const config = JSON.parse(read('src-tauri/tauri.conf.json'));

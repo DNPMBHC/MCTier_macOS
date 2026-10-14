@@ -1,0 +1,41 @@
+[package]
+name = "mctier-core"
+version = "3.10.0"
+edition = "2021"
+description = "MCTier 平台无关核心：配置、错误、日志、应用路径、聊天鉴权、CORS 策略"
+publish = false
+
+# 本 crate 的平台无关性是不变量，不只是约定：
+# 这里**不得**出现 windows / objc2 / webkit2gtk 等平台 API 依赖，也不得因 target_os
+# 引入不同依赖。平台差异必须通过 mctier-platform 的 trait 由各平台实现注入。
+# CI 会对本目录做 grep 检查（详见仓库根 .github/workflows/ci.yml）。
+[features]
+# 测试专用：让 ChatSigner::local_identity() 每次生成新身份，避免单元测试读写开发者的
+# 系统钥匙串。由依赖方的 [dev-dependencies] 开启——这是跨 crate 场景下 cfg(test) 的
+# 标准替代：cfg(test) 只在本 crate 自己的测试构建里生效，对依赖方无效。
+test-identity = []
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+log = "0.4"
+dirs = "5"
+chrono = { version = "0.4", features = ["serde"] }
+rand = "0.8"
+base64 = "0.22"
+sha2 = "0.10"
+p256 = { version = "0.13", features = ["ecdh"] }
+hkdf = "0.12"
+aes-gcm = "0.10"
+tokio = { version = "1", features = ["full"] }
+axum = "0.7"
+tower-http = { version = "0.5", features = ["fs", "cors", "trace"] }
+# 系统钥匙串。keyring 本身是跨平台 crate（按 target 选后端），不引入裸平台 API；
+# 但它是典型的平台集成点，Stage 2 应把它收到 mctier-platform 的 trait 之后。
+keyring = { version = "3", features = ["windows-native", "apple-native", "sync-secret-service", "crypto-rust"] }
+
+[dev-dependencies]
+# http_cors 的测试直接驱动 axum Router 断言响应头，需要 ServiceExt::oneshot。
+tower = { version = "0.4", features = ["util"] }
+tempfile = "3"

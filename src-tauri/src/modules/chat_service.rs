@@ -1649,6 +1649,10 @@ mod tests {
             )
             .unwrap();
         service.stop_server().await;
+        // stop_server 会丢弃内存中缓存的 signer，下次使用再重新取得，因此这里应看到
+        // 一个**新的**身份。该断言依赖 mctier-core 的 `test-identity` feature
+        // （由本 crate 的 [dev-dependencies] 开启）让 local_identity() 每次新生成；
+        // 生产路径读系统钥匙串，拿到的是同一个持久身份。
         assert_ne!(service.signaling_identity().unwrap(), before);
         assert!(service.session.read().is_none());
     }
