@@ -50,8 +50,9 @@ export async function microphoneDevices(): Promise<MicrophoneDevice[]> {
  * 停止麦克风时会一并释放底层采集与音频图。
  */
 function applyMacMicrophoneGain(raw: MediaStream, gain: number): MediaStream {
-  const AC = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
-  const ctx = new AC();
+  // 用裸全局 AudioContext（与本文件原生采集路径一致）。不要写成 window.AudioContext：
+  // 那在部分宿主环境下取不到构造函数，会让整条增益级抛异常并静默退回无增益的原始流。
+  const ctx = new AudioContext();
   const source = ctx.createMediaStreamSource(raw);
   const boost = ctx.createGain();
   boost.gain.value = gain;
@@ -72,19 +73,22 @@ function applyMacMicrophoneGain(raw: MediaStream, gain: number): MediaStream {
 
   const outTrack = dest.stream.getAudioTracks()[0];
   const rawTrack = raw.getAudioTracks()[0];
-  // 先读原始 deviceId 再改写 getSettings：若两者恰好是同一轨道对象，改写后再读会自我递归。
+  // 先读原始 deviceId、并捕获原始轨道的 stop 函数，之后才改写。
+  // 若输出轨道与原始轨道恰是同一对象（测试宿主可能如此），改写后再遍历调用会递归到自身。
+  const rawStops = raw.getTracks().map(track => track.stop.bind(track));
   const rawDeviceId = rawTrack?.getSettings().deviceId ?? '';
   const settings = outTrack.getSettings.bind(outTrack);
   outTrack.getSettings = () => ({ ...settings(), deviceId: rawDeviceId });
-  const rawStop = rawTrack?.stop.bind(rawTrack);
   outTrack.stop = () => {
-    raw.getTracks().forEach(track => track.stop());
+    rawStops.forEach(stop => { try { stop(); } catch { /* ignore */ } });
     try { source.disconnect(); } catch { /* ignore */ }
     try { void ctx.close(); } catch { /* ignore */ }
-    rawStop?.();
   };
   // 设备被拔掉/系统关闭麦克风时，原始轨道结束也要让处理后的轨道一起结束。
-  rawTrack?.addEventListener('ended', () => { outTrack.stop(); outTrack.dispatchEvent(new Event('ended')); }, { once: true });
+  rawTrack?.addEventListener('ended', () => {
+    outTrack.stop();
+    if (rawTrack !== outTrack) outTrack.dispatchEvent(new Event('ended'));
+  }, { once: true });
   return dest.stream;
 }
 
