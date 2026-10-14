@@ -3208,6 +3208,10 @@ dependencies = [
  "log",
  "mctier-core",
  "mctier-image-optimizer",
+ "mctier-platform",
+ "mctier-platform-linux",
+ "mctier-platform-macos",
+ "mctier-platform-windows",
  "objc2",
  "objc2-av-foundation",
  "objc2-core-audio-types",
@@ -3266,6 +3270,7 @@ dependencies = [
  "keyring",
  "libc",
  "log",
+ "mctier-platform",
  "p256",
  "parking_lot",
  "rand 0.8.8",
@@ -3295,6 +3300,42 @@ dependencies = [
  "turbojpeg",
  "webp",
  "weezl 0.2.1",
+]
+
+[[package]]
+name = "mctier-platform"
+version = "3.10.0"
+dependencies = [
+ "serde",
+ "tauri",
+]
+
+[[package]]
+name = "mctier-platform-linux"
+version = "3.10.0"
+dependencies = [
+ "log",
+ "mctier-platform",
+ "tauri",
+]
+
+[[package]]
+name = "mctier-platform-macos"
+version = "3.10.0"
+dependencies = [
+ "log",
+ "mctier-platform",
+ "tauri",
+]
+
+[[package]]
+name = "mctier-platform-windows"
+version = "3.10.0"
+dependencies = [
+ "log",
+ "mctier-platform",
+ "tauri",
+ "windows 0.58.0",
 ]
 
 [[package]]

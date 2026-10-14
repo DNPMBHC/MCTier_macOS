@@ -1,0 +1,11 @@
+[package]
+name = "mctier-platform-linux"
+version = "3.10.0"
+edition = "2021"
+description = "MCTier Linux 平台实现：标准窗口生命周期与 POSIX 路径规则"
+publish = false
+
+[dependencies]
+log = "0.4"
+mctier-platform = { path = "../mctier-platform" }
+tauri = { version = "2", features = ["tray-icon", "protocol-asset"] }

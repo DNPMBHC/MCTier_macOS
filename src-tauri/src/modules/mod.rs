@@ -25,7 +25,7 @@ pub use mctier_core::{config_manager, lobby_address};
 
 // 服务层
 pub use mctier_core::{
-    chat_service, file_transfer, p2p_signaling, websocket_signaling,
+    chat_service, file_transfer, p2p_signaling, voice_service, websocket_signaling,
 };
 
 // Minecraft 集成
@@ -59,7 +59,6 @@ pub mod macos_privilege;
 // macOS：常驻特权守护进程（一次授权、运行期复用，不再每次大厅弹密码）
 #[cfg(target_os = "macos")]
 pub mod macos_privileged_daemon;
-pub mod voice_service;
 #[cfg(windows)]
 pub mod windows_paths;
 

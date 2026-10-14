@@ -17,8 +17,37 @@ static TRAY_SUMMON_HOTKEY: std::sync::OnceLock<std::sync::RwLock<String>> =
 static TRAY_NOTIFICATION_GENERATION: std::sync::atomic::AtomicU64 =
     std::sync::atomic::AtomicU64::new(0);
 static TRAY_NOTIFICATION_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-static RESTORE_ALWAYS_ON_TOP_AFTER_TRAY: std::sync::atomic::AtomicBool =
-    std::sync::atomic::AtomicBool::new(false);
+/// 当前编译目标的平台窗口生命周期策略（实现 `mctier_platform::WindowPolicy`）。
+fn platform_window_policy() -> &'static dyn mctier_platform::WindowPolicy {
+    #[cfg(target_os = "macos")]
+    {
+        &mctier_platform_macos::WINDOW_POLICY
+    }
+    #[cfg(target_os = "windows")]
+    {
+        &mctier_platform_windows::WINDOW_POLICY
+    }
+    #[cfg(all(not(target_os = "macos"), not(target_os = "windows")))]
+    {
+        &mctier_platform_linux::WINDOW_POLICY
+    }
+}
+
+/// 当前编译目标的平台通知器（实现 `mctier_platform::Notifier`）。
+fn platform_notifier() -> &'static dyn mctier_platform::Notifier {
+    #[cfg(target_os = "macos")]
+    {
+        &mctier_platform_macos::NOTIFIER
+    }
+    #[cfg(target_os = "windows")]
+    {
+        &mctier_platform_windows::NOTIFIER
+    }
+    #[cfg(all(not(target_os = "macos"), not(target_os = "windows")))]
+    {
+        &mctier_platform_linux::NOTIFIER
+    }
+}
 
 /// 优雅退出进行中标志。
 ///
@@ -346,68 +375,11 @@ fn restore_main_window(app: &tauri::AppHandle) {
     use tauri::Manager;
     TRAY_NOTIFICATION_GENERATION.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
     if let Some(window) = app.get_webview_window("main") {
-        // 先确保不再是隐藏 / 最小化状态
-        let _ = window.unminimize();
-        let _ = window.show();
-
-        #[cfg(target_os = "windows")]
-        if let Ok(hwnd) = window.hwnd() {
-            use windows::Win32::Foundation::HWND;
-            use windows::Win32::UI::WindowsAndMessaging::{
-                BringWindowToTop, IsIconic, SetForegroundWindow, ShowWindow, SW_RESTORE, SW_SHOW,
-            };
-            let h = HWND(hwnd.0 as *mut _);
-            unsafe {
-                let _ = ShowWindow(h, SW_SHOW);
-                if IsIconic(h).as_bool() {
-                    let _ = ShowWindow(h, SW_RESTORE);
-                }
-                // 抢占前台并置顶，确保从隐藏/最小化恢复后真正显示在最前
-                let _ = BringWindowToTop(h);
-                let _ = SetForegroundWindow(h);
-            }
-        }
-
-        let _ = window.set_focus();
-        if RESTORE_ALWAYS_ON_TOP_AFTER_TRAY.swap(false, std::sync::atomic::Ordering::AcqRel) {
-            let _ = window.set_always_on_top(true);
+        if let Err(e) = platform_window_policy().restore(&window) {
+            error!("{e}");
         }
         let host_window = window.as_ref().window();
         ensure_window_visible(&host_window);
-    }
-}
-
-#[cfg(target_os = "windows")]
-fn release_windows_foreground_after_hide(window: &tauri::WebviewWindow) {
-    use windows::Win32::Foundation::HWND;
-    use windows::Win32::UI::WindowsAndMessaging::{
-        GetForegroundWindow, GetShellWindow, GetWindowThreadProcessId, SetForegroundWindow,
-        SetWindowPos, HWND_NOTOPMOST, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
-    };
-
-    if let Ok(hwnd) = window.hwnd() {
-        let hwnd = HWND(hwnd.0 as *mut _);
-        unsafe {
-            let _ = SetWindowPos(
-                hwnd,
-                HWND_NOTOPMOST,
-                0,
-                0,
-                0,
-                0,
-                SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
-            );
-
-            let foreground = GetForegroundWindow();
-            let mut foreground_process_id = 0;
-            GetWindowThreadProcessId(foreground, Some(&mut foreground_process_id));
-            if foreground_process_id == std::process::id() {
-                let shell = GetShellWindow();
-                if !shell.0.is_null() {
-                    let _ = SetForegroundWindow(shell);
-                }
-            }
-        }
     }
 }
 
@@ -438,23 +410,14 @@ fn show_tray_background_notification(app: &tauri::AppHandle, generation: u64) {
         return;
     }
 
+    let (default_title, default_body) = platform_notifier().default_background_notice();
     let (title, body_template) = TRAY_NOTIFICATION_TEXT
         .get_or_init(|| {
-            std::sync::RwLock::new((
-                "MCTier 正在后台运行".to_string(),
-                "MCTier 已最小化到系统托盘。点击右下角托盘图标或按 {shortcut} 可恢复窗口。"
-                    .to_string(),
-            ))
+            std::sync::RwLock::new((default_title.to_string(), default_body.to_string()))
         })
         .read()
         .map(|text| text.clone())
-        .unwrap_or_else(|_| {
-            (
-                "MCTier 正在后台运行".to_string(),
-                "MCTier 已最小化到系统托盘。点击右下角托盘图标或按 {shortcut} 可恢复窗口。"
-                    .to_string(),
-            )
-        });
+        .unwrap_or_else(|_| (default_title.to_string(), default_body.to_string()));
     let summon_hotkey = TRAY_SUMMON_HOTKEY
         .get_or_init(|| std::sync::RwLock::new("Ctrl+Alt+M".to_string()))
         .read()
@@ -472,30 +435,8 @@ fn show_tray_background_notification(app: &tauri::AppHandle, generation: u64) {
     // 托盘气泡通知走的是 Windows 的 Shell_NotifyIcon。macOS 用系统通知中心
     // （osascript display notification）实现同等提示；其余桌面环境行为不一，
     // 不自造一套桌面通知，只记一条日志，同时显式消费上面算好的文案。
-    #[cfg(target_os = "macos")]
-    {
-        let escape = |text: &str| {
-            text.replace('\\', "\\\\").replace('"', "\\\"")
-        };
-        let script = format!(
-            "display notification \"{}\" with title \"{}\"",
-            escape(&notification_body),
-            escape(&title)
-        );
-        match std::process::Command::new("/usr/bin/osascript").arg("-e").arg(&script).spawn() {
-            Ok(_) => info!("已发送 macOS 后台运行通知"),
-            Err(error) => log::warn!("发送 macOS 后台运行通知失败: {error}"),
-        }
-    }
-
-    #[cfg(all(not(target_os = "windows"), not(target_os = "macos")))]
-    {
-        log::info!(
-            "托盘后台运行提示（当前平台无气泡通知）: {} - {}",
-            title,
-            notification_body
-        );
-    }
+    #[cfg(not(target_os = "windows"))]
+    platform_notifier().notify_running_in_background(app, &title, &notification_body);
 
     #[cfg(target_os = "windows")]
     {
@@ -743,44 +684,35 @@ fn hide_main_window_to_tray(app: &tauri::AppHandle, source: &str) {
         return;
     };
 
-    let was_visible = window.is_visible().unwrap_or(false);
-    if !was_visible && source != "关闭按钮" {
-        info!(
-            "{}：MCTier 已经处于系统托盘，不重复发送后台运行通知",
-            source
-        );
-        return;
+    match platform_window_policy().hide_to_background(&window, source) {
+        Ok(false) => return,
+        Ok(true) => {}
+        Err(e) => {
+            error!("{e}");
+            return;
+        }
     }
-
-    // Clear the minimized state before hiding so restore does not inherit a
-    // stale taskbar/Win+D state from the previous transition.
-    let _ = window.unminimize();
-    let was_always_on_top = window.is_always_on_top().unwrap_or(false);
-    RESTORE_ALWAYS_ON_TOP_AFTER_TRAY.store(was_always_on_top, std::sync::atomic::Ordering::Release);
-    if was_always_on_top {
-        let _ = window.set_always_on_top(false);
-    }
-    if let Err(e) = window.hide() {
-        error!("{} 隐藏主窗口到托盘失败: {}", source, e);
-        return;
-    }
-    #[cfg(target_os = "windows")]
-    release_windows_foreground_after_hide(&window);
 
     info!(
-        "{}：MCTier 已最小化到系统托盘，准备发送后台运行通知",
+        "{}：MCTier 已最小化到后台，准备发送后台运行通知",
         source
     );
     let generation =
         TRAY_NOTIFICATION_GENERATION.fetch_add(1, std::sync::atomic::Ordering::AcqRel) + 1;
-    let notification_app = app.clone();
-    std::thread::spawn(move || {
-        std::thread::sleep(std::time::Duration::from_millis(300));
-        let main_thread_app = notification_app.clone();
-        let _ = notification_app.run_on_main_thread(move || {
-            show_tray_background_notification(&main_thread_app, generation);
+    // macOS 无 Shell_NotifyIcon 窗口争用问题，无需 300ms 延迟线程，直接发送系统通知。
+    #[cfg(target_os = "macos")]
+    show_tray_background_notification(app, generation);
+    #[cfg(not(target_os = "macos"))]
+    {
+        let notification_app = app.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(300));
+            let main_thread_app = notification_app.clone();
+            let _ = notification_app.run_on_main_thread(move || {
+                show_tray_background_notification(&main_thread_app, generation);
+            });
         });
-    });
+    }
 }
 
 /// Toggle the main window from the native process so this keeps working while
@@ -861,39 +793,6 @@ fn start_summon_fallback_listener(app: &tauri::AppHandle) {
 
 /// 由前端按当前界面语言更新系统托盘菜单文本（显示/退出）。
 /// 保持菜单项 id 不变（show_main / exit_app），故已注册的 on_menu_event 仍生效。
-#[cfg(target_os = "windows")]
-unsafe extern "system" fn window_subclass_proc(
-    hwnd: windows::Win32::Foundation::HWND,
-    msg: u32,
-    wparam: windows::Win32::Foundation::WPARAM,
-    lparam: windows::Win32::Foundation::LPARAM,
-    _id: usize,
-    _data: usize,
-) -> windows::Win32::Foundation::LRESULT {
-    use windows::Win32::Foundation::LRESULT;
-    use windows::Win32::UI::Shell::DefSubclassProc;
-    use windows::Win32::UI::WindowsAndMessaging::{
-        ShowWindow, SC_MINIMIZE, SW_HIDE, WM_SYSCOMMAND,
-    };
-
-    if msg == WM_SYSCOMMAND && (wparam.0 & 0xFFF0) == SC_MINIMIZE as usize {
-        let _ = ShowWindow(hwnd, SW_HIDE);
-        return LRESULT(0);
-    }
-    DefSubclassProc(hwnd, msg, wparam, lparam)
-}
-
-#[cfg(target_os = "windows")]
-fn install_minimize_to_hide(window: &tauri::WebviewWindow) {
-    use windows::Win32::Foundation::HWND;
-    use windows::Win32::UI::Shell::SetWindowSubclass;
-    if let Ok(hwnd) = window.hwnd() {
-        let hwnd = HWND(hwnd.0 as *mut _);
-        unsafe {
-            let _ = SetWindowSubclass(hwnd, Some(window_subclass_proc), 1, 0);
-        }
-    }
-}
 
 #[tauri::command]
 fn set_tray_menu_texts(
@@ -1299,6 +1198,19 @@ pub fn run() {
     info!("MCTier 应用程序启动中...");
     info!("日志文件位置: {:?}", log_path);
 
+    // 注册平台原生麦克风枚举器，使 mctier-core 中的 VoiceService 保持平台无关。
+    modules::voice_service::register_input_device_enumerator(|| {
+        modules::native_microphone::input_devices()
+            .into_iter()
+            .map(|d| mctier_platform::NativeAudioInput {
+                device_id: d.device_id,
+                label: d.label,
+                is_default: d.is_default,
+                is_communications: d.is_communications,
+            })
+            .collect()
+    });
+
     let runtime = tokio::runtime::Runtime::new().expect("无法创建 Tokio 运行时");
     let app_core = runtime.block_on(async {
         match AppCore::new().await {
@@ -1364,7 +1276,7 @@ pub fn run() {
 
             #[cfg(target_os = "windows")]
             if let Some(main_window) = app.get_webview_window("main") {
-                install_minimize_to_hide(&main_window);
+                platform_window_policy().install_window_hooks(&main_window);
                 if let Err(error) = crate::modules::media_permission::install(&main_window) {
                     log::warn!("安装浏览器媒体权限拦截失败: {error}");
                 }

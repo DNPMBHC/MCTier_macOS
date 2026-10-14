@@ -7,7 +7,14 @@
 # 1. cargo 产物目录从 src-tauri/target 变为 <root>/target，Cargo.lock 也从 src-tauri/ 上移。
 # 2. 子包的 [profile.*] 会被忽略，profile 必须写在本文件里。
 [workspace]
-members = ["src-tauri", "crates/mctier-core"]
+members = [
+    "src-tauri",
+    "crates/mctier-core",
+    "crates/mctier-platform",
+    "crates/mctier-platform-macos",
+    "crates/mctier-platform-windows",
+    "crates/mctier-platform-linux",
+]
 # shared/image-optimizer 刻意排除在外：Android 构建脚本以 `cargo ndk ... --locked` 在该目录下
 # 独立构建它，并把它自己的 Cargo.lock 声明为 Gradle 的构建输入。一旦并入本 workspace，
 # cargo 会改用根 lockfile 与根 target，--locked 可能失败、Gradle 的输入文件也会变成死文件。

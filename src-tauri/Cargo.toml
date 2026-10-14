@@ -23,6 +23,7 @@ tauri = { version = "2", features = ["tray-icon", "protocol-asset", "macos-priva
 # 平台无关核心（错误/日志/应用路径/CORS/聊天鉴权）。平台无关模块迁往这里，
 # 以避免 macOS 壳与 Windows/Linux 各自重复实现。
 mctier-core = { path = "../crates/mctier-core" }
+mctier-platform = { path = "../crates/mctier-platform" }
 tauri-plugin-shell = "2"
 tauri-plugin-global-shortcut = "2"
 tauri-plugin-clipboard-manager = "2"
@@ -80,12 +81,14 @@ libc = "0.2"
 # permission-request 信号，必须直接操作底层 WebView 才能拿到麦克风/摄像头能力。
 # 版本需与 tauri 2.x 依赖的 wry 所用 webkit2gtk 保持一致（2.x → webkit2gtk-4.1）。
 [target.'cfg(target_os = "linux")'.dependencies]
+mctier-platform-linux = { path = "../crates/mctier-platform-linux" }
 # 特性与 tauri 自身对 webkit2gtk 的声明保持一致（v2_40 链式包含 v2_4）。
 # 不能省：set_enable_media_stream / set_enable_mediasource 由 v2_4 门控，
 # 若只依赖 cargo 的特性合并，将来 tauri 调整特性就会突然编译失败。
 webkit2gtk = { version = "2.0", features = ["v2_40"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
+mctier-platform-macos = { path = "../crates/mctier-platform-macos" }
 core-graphics = { version = "0.25", features = ["highsierra"] }
 # 屏幕采集枚举窗口用 CFArray/CFString；版本跟随 core-graphics 自身的 core-foundation。
 core-foundation = "0.10"
@@ -102,6 +105,7 @@ objc2-core-audio-types = { version = "0.3.2", features = ["CoreAudioBaseTypes"] 
 objc2-av-foundation = { version = "0.3.2", features = ["AVCaptureDevice", "AVMediaFormat", "block2"] }
 
 [target.'cfg(windows)'.dependencies]
+mctier-platform-windows = { path = "../crates/mctier-platform-windows" }
 webview2-com = "0.38.2"
 windows-core-webview = { package = "windows-core", version = "0.61" }
 wasapi = "0.23"

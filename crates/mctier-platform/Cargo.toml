@@ -1,0 +1,12 @@
+[package]
+name = "mctier-platform"
+version = "3.10.0"
+edition = "2021"
+description = "MCTier 平台抽象契约：窗口生命周期、托盘/菜单栏、通知、提权、采集、自启、hosts、路径规则"
+publish = false
+
+# 本 crate **仅定义契约**（trait 与纯数据类型），严禁引入任何操作系统专属依赖
+# （windows / objc2 / webkit2gtk 等）。具体实现由 mctier-platform-{macos,windows,linux} 提供。
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+tauri = { version = "2", features = ["protocol-asset"] }

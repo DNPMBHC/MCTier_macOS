@@ -1,0 +1,18 @@
+[package]
+name = "mctier-platform-windows"
+version = "3.10.0"
+edition = "2021"
+description = "MCTier Windows 平台实现：WS_POPUP 窗口生命周期、Shell_NotifyIcon 托盘、保留名规则"
+publish = false
+
+[dependencies]
+log = "0.4"
+mctier-platform = { path = "../mctier-platform" }
+tauri = { version = "2", features = ["tray-icon", "protocol-asset"] }
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.58", features = [
+    "Win32_Foundation",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_UI_Shell",
+] }

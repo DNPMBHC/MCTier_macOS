@@ -1,0 +1,12 @@
+[package]
+name = "mctier-platform-macos"
+version = "3.10.0"
+edition = "2021"
+description = "MCTier macOS 原生平台实现：AppKit 窗口生命周期、菜单栏通知、LaunchAgent 自启"
+publish = false
+
+# 严禁依赖任何 Windows/Linux 专属库（windows / wasapi / webview2-com / webkit2gtk）。
+[dependencies]
+log = "0.4"
+mctier-platform = { path = "../mctier-platform" }
+tauri = { version = "2", features = ["protocol-asset", "macos-private-api"] }

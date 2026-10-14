@@ -41,6 +41,7 @@ pub mod lobby_address;
 pub mod chat_service;
 pub mod file_transfer;
 pub mod p2p_signaling;
+pub mod voice_service;
 pub mod websocket_signaling;
 
 // —— Minecraft 集成 ——

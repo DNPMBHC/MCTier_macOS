@@ -5,7 +5,17 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tokio::sync::{Mutex, RwLock};
 
-use crate::modules::error::{log_error, AppError};
+use crate::error::{log_error, AppError};
+use mctier_platform::NativeAudioInput;
+use std::sync::OnceLock;
+
+type InputEnumerator = fn() -> Vec<NativeAudioInput>;
+static INPUT_ENUMERATOR: OnceLock<InputEnumerator> = OnceLock::new();
+
+/// 由平台壳在启动时注册原生麦克风枚举函数，使 `VoiceService` 保持平台无关。
+pub fn register_input_device_enumerator(f: InputEnumerator) {
+    let _ = INPUT_ENUMERATOR.set(f);
+}
 
 /// 音频设备类型
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -184,10 +194,10 @@ impl VoiceService {
         // 不再返回写死的占位“默认麦克风”。枚举在阻塞线程里跑，避免卡住 async 执行器。
         // 平台不支持或枚举为空时，兜底一个“系统默认麦克风”条目，保证始终有一个可选项，
         // 真正采集时空 device_id 会被解析为系统默认输入设备。
-        let native_inputs =
-            tokio::task::spawn_blocking(crate::modules::native_microphone::input_devices)
-                .await
-                .unwrap_or_default();
+        let native_inputs = match INPUT_ENUMERATOR.get().copied() {
+            Some(f) => tokio::task::spawn_blocking(f).await.unwrap_or_default(),
+            None => Vec::new(),
+        };
         if native_inputs.is_empty() {
             devices.push(AudioDevice {
                 id: String::new(),

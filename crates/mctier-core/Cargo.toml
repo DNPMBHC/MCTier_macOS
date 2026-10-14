@@ -23,6 +23,7 @@ publish = false
 test-identity = []
 
 [dependencies]
+mctier-platform = { path = "../mctier-platform" }
 # 允许依赖 tauri：问题在平台 API（Win32/AppKit），不在 Tauri 本身——它自身跨平台。
 # 若把 Tauri 一并剥掉，命令层与事件系统要全部重写，收益与成本不成比例。
 tauri = { version = "2", features = ["protocol-asset"] }
