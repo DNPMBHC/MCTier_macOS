@@ -4123,6 +4123,16 @@ export class WebRTCClient {
       console.log('✅ 麦克风状态已更新并广播');
     } catch (error) {
       console.error('❌ 设置麦克风状态失败:', error);
+      // 开启麦克风失败（如系统权限拒绝或设备异常）时，必须同步回滚期望状态、前端 Store
+      // 与后端 VoiceService 状态，避免界面按钮仍停留在「已开麦」的假象。
+      if (enabled) {
+        this.desiredMicEnabled = false;
+        this.micActuallyEnabled = false;
+        void import('../../stores')
+          .then(({ useAppStore }) => useAppStore.getState().setMicEnabled(false))
+          .catch(() => {});
+        void invoke('set_mic_enabled', { enabled: false }).catch(() => {});
+      }
       throw error;
     } finally {
       this.micTransitions--;

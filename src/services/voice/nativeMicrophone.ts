@@ -2,7 +2,7 @@ import { invoke, isTauri } from '@tauri-apps/api/core';
 import workletUrl from './nativeMicrophoneWorklet.js?url&no-inline';
 import { pcmRms } from './microphoneLevel';
 import { isMacOSPlatform } from '../../utils/platform';
-import { macHeadphoneMode, macMicGain } from './macEchoMode';
+import { macHeadphoneMode, macMicGain, subscribeMacMicGain } from './macEchoMode';
 
 const nativeLevels = new WeakMap<MediaStream, number>();
 /** Undefined for browser streams; native values come directly from WASAPI PCM. */
@@ -49,7 +49,7 @@ export async function microphoneDevices(): Promise<MicrophoneDevice[]> {
  * 返回的轨道保留原始流的 deviceId（供调用方比对设备），并接管 stop()，让上层照常
  * 停止麦克风时会一并释放底层采集与音频图。
  */
-function applyMacMicrophoneGain(raw: MediaStream, gain: number): MediaStream {
+async function applyMacMicrophoneGain(raw: MediaStream, gain: number): Promise<MediaStream> {
   // 用裸全局 AudioContext（与本文件原生采集路径一致）。不要写成 window.AudioContext：
   // 那在部分宿主环境下取不到构造函数，会让整条增益级抛异常并静默退回无增益的原始流。
   const ctx = new AudioContext();
@@ -68,8 +68,13 @@ function applyMacMicrophoneGain(raw: MediaStream, gain: number): MediaStream {
   source.connect(boost);
   boost.connect(limiter);
   limiter.connect(dest);
-  // 打开麦克风是明确的用户手势，直接恢复，避免 MediaStreamDestination 在挂起时静音。
-  void ctx.resume().catch(() => {});
+  // 必须等待 AudioContext 真正处于 running 状态，避免 MediaStreamDestination 在挂起时输出静音。
+  await resumeAudioContext(ctx);
+
+  // 实时订阅增益变化：用户拖动滑杆时直接调整 GainNode，无需重建麦克风流，试音电平条也能实时响应。
+  const unsubscribeGain = subscribeMacMicGain(nextGain => {
+    boost.gain.value = nextGain;
+  });
 
   const outTrack = dest.stream.getAudioTracks()[0];
   const rawTrack = raw.getAudioTracks()[0];
@@ -80,6 +85,7 @@ function applyMacMicrophoneGain(raw: MediaStream, gain: number): MediaStream {
   const settings = outTrack.getSettings.bind(outTrack);
   outTrack.getSettings = () => ({ ...settings(), deviceId: rawDeviceId });
   outTrack.stop = () => {
+    unsubscribeGain();
     rawStops.forEach(stop => { try { stop(); } catch { /* ignore */ } });
     try { source.disconnect(); } catch { /* ignore */ }
     try { void ctx.close(); } catch { /* ignore */ }
@@ -113,7 +119,7 @@ async function openBrowserMicrophone(deviceId: string, systemProcessing: boolean
   const raw = await navigator.mediaDevices.getUserMedia({ audio, video: false });
   if (!headphoneMode) return raw;
   try {
-    return applyMacMicrophoneGain(raw, macMicGain());
+    return await applyMacMicrophoneGain(raw, macMicGain());
   } catch (error) {
     // 软件增益不可用时退回原始采集：音量偏小也好过拿不到麦克风。
     console.warn('macOS 软件麦克风增益不可用，使用原始采集:', error);

@@ -225,8 +225,37 @@ function MainWindowApp() {
       } catch (error) {
         console.warn('读取语音模式失败，使用常开:', error);
       }
-      offs.push(await listen('ptt-pressed', () => voiceMode.setPttHeld(true)));
-      offs.push(await listen('ptt-released', () => voiceMode.setPttHeld(false)));
+      let mutPttState = { tempOpenedMic: false };
+      offs.push(
+        await listen('ptt-pressed', () => {
+          voiceMode.setPttHeld(true);
+          // 兼容非 PTT 模式（常开/声控）下的「按住临时开麦」：若当前处于关麦且在大厅中，
+          // 按住快捷键期间临时开启麦克风，松开后自动恢复关麦。
+          if (voiceMode.getMode() !== 'ptt') {
+            const state = useAppStore.getState();
+            if (state.appState === 'in-lobby' && !state.micEnabled) {
+              mutPttState.tempOpenedMic = true;
+              state.setMicEnabled(true);
+              void webrtcClient.setMicEnabled(true).catch(() => {});
+              void invoke('set_mic_enabled', { enabled: true }).catch(() => {});
+            }
+          }
+        })
+      );
+      offs.push(
+        await listen('ptt-released', () => {
+          voiceMode.setPttHeld(false);
+          if (mutPttState.tempOpenedMic) {
+            mutPttState.tempOpenedMic = false;
+            const state = useAppStore.getState();
+            if (state.micEnabled) {
+              state.setMicEnabled(false);
+              void webrtcClient.setMicEnabled(false).catch(() => {});
+              void invoke('set_mic_enabled', { enabled: false }).catch(() => {});
+            }
+          }
+        })
+      );
       // 设置页改模式后广播，立即生效。
       const onModeChange = (e: Event) => {
         const detail = (e as CustomEvent<string>).detail;

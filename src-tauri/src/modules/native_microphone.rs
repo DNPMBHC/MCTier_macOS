@@ -104,7 +104,7 @@ fn update_background_activity() {
         .lock()
         .unwrap_or_else(|e| e.into_inner())
         .is_empty();
-    crate::modules::macos_platform::set_realtime_activity(active);
+    crate::modules::macos_platform::set_native_mic_activity(active);
 }
 fn authorize(window: &WebviewWindow) -> Result<(), String> {
     let url = window.url().map_err(|e| e.to_string())?;

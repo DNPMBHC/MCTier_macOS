@@ -467,6 +467,8 @@ pub async fn leave_lobby(state: State<'_, AppState>) -> Result<(), String> {
     drop(p2p_svc);
 
     // 清理语音服务
+    #[cfg(target_os = "macos")]
+    crate::modules::macos_platform::set_voice_mic_activity(false);
     let voice_svc = voice_service.lock().await;
     if let Err(e) = voice_svc.cleanup().await {
         log::warn!("清理语音服务时发生错误: {}", e);
@@ -544,6 +546,9 @@ pub async fn set_mic_enabled(
         .set_mic_enabled(enabled)
         .await
         .map_err(|e| e.to_string())?;
+
+    #[cfg(target_os = "macos")]
+    crate::modules::macos_platform::set_voice_mic_activity(new_state);
 
     if let Err(e) = app.emit("mic-toggled", new_state) {
         log::error!("发送麦克风状态事件失败: {}", e);

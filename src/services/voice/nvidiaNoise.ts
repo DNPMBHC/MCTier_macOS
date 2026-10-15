@@ -1,5 +1,6 @@
 import { audioDevices } from './audioDevices';
 import { microphoneDevices, nativeMicrophoneSupported, openMicrophone, type MicrophoneDevice } from './nativeMicrophone';
+import { isMacOSPlatform } from '../../utils/platform';
 
 // Keep the existing preference key and exports so upgrades retain user choices.
 export type NvidiaNoiseMode = 'auto' | 'off' | 'nvidia' | 'amd';
@@ -55,7 +56,9 @@ async function acquire(): Promise<MediaStream> {
 export async function captureVoiceStream(): Promise<MediaStream> {
   let stream = await acquire();
   try {
-    if (await nativeMicrophoneSupported()) return stream;
+    // macOS 实际走浏览器 getUserMedia，不能按 nativeMicrophoneSupported() 提前短路返回，
+    // 否则首次授权后拿到真实设备 label 时不会重新匹配选定设备。
+    if (!isMacOSPlatform && (await nativeMicrophoneSupported())) return stream;
     // Device labels become available only after the initial microphone permission.
     const device = await aiNoiseDevice();
     if (device && stream.getAudioTracks()[0]?.getSettings().deviceId !== device.deviceId) {

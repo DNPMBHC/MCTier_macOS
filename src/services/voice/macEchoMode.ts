@@ -84,6 +84,8 @@ export function macMicGain(): number {
   }
 }
 
+const GAIN_LISTENERS = new Set<(gain: number) => void>();
+
 export function setMacMicGain(value: number): void {
   const clamped = Math.min(MAC_MIC_GAIN_MAX, Math.max(MAC_MIC_GAIN_MIN, value));
   try {
@@ -91,6 +93,15 @@ export function setMacMicGain(value: number): void {
   } catch {
     /* ignore */
   }
+  GAIN_LISTENERS.forEach(fn => {
+    try { fn(clamped); } catch { /* ignore */ }
+  });
+}
+
+/** 订阅麦克风软件增益变化（供活动的 GainNode 实时平滑更新，无需重建流）。 */
+export function subscribeMacMicGain(listener: (gain: number) => void): () => void {
+  GAIN_LISTENERS.add(listener);
+  return () => GAIN_LISTENERS.delete(listener);
 }
 
 /**

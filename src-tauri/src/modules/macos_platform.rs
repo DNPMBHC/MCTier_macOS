@@ -182,6 +182,9 @@ extern "C" {
 
 static REALTIME_ACTIVITY_ACTIVE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 static REALTIME_ACTIVITY_TOKEN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static NATIVE_CAPTURE_ACTIVE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static NATIVE_MIC_ACTIVE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static VOICE_MIC_ACTIVE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 fn process_info() -> Obj {
     unsafe {
@@ -223,9 +226,15 @@ fn end_realtime_activity(token: u64) {
     }
 }
 
-/// 有实时会话（原生麦克风/屏幕采集）时阻止 App Nap 节流；全部结束后释放。
-/// 幂等且可从任意线程调用；token 配对由 active 边沿驱动，避免泄漏重复的 activity。
-pub fn set_realtime_activity(active: bool) {
+fn sync_realtime_activity() {
+    use std::sync::atomic::Ordering;
+    let active = NATIVE_CAPTURE_ACTIVE.load(Ordering::Acquire)
+        || NATIVE_MIC_ACTIVE.load(Ordering::Acquire)
+        || VOICE_MIC_ACTIVE.load(Ordering::Acquire);
+    apply_realtime_activity(active);
+}
+
+fn apply_realtime_activity(active: bool) {
     use std::sync::atomic::Ordering;
     // App Nap 豁免只防「隐藏窗口被节流」，不防系统休眠。实时会话期间同时申请
     // 防休眠断言，两者职责不同但同生命周期，这里统一按会话边沿驱动。
@@ -245,6 +254,40 @@ pub fn set_realtime_activity(active: bool) {
             log::debug!("已释放 macOS 后台活动豁免（token={token}）");
         }
     }
+}
+
+/// 屏幕采集会话状态更新。
+pub fn set_native_capture_activity(active: bool) {
+    NATIVE_CAPTURE_ACTIVE.store(active, std::sync::atomic::Ordering::Release);
+    sync_realtime_activity();
+}
+
+/// 原生音频/系统声音采集会话状态更新。
+pub fn set_native_mic_activity(active: bool) {
+    NATIVE_MIC_ACTIVE.store(active, std::sync::atomic::Ordering::Release);
+    sync_realtime_activity();
+}
+
+/// 浏览器（WKWebView `getUserMedia`）语音麦克风状态更新。
+///
+/// macOS 麦克风采集走 WKWebView `getUserMedia` + WebAudio 实时增益/变声图，
+/// 不经过 Rust `native_microphone_start`。若此处不登记活动状态，用户开麦后一旦隐藏
+/// 窗口或切入全屏游戏，App Nap 会节流 WKWebView 导致语音断流或无声。
+pub fn set_voice_mic_activity(active: bool) {
+    VOICE_MIC_ACTIVE.store(active, std::sync::atomic::Ordering::Release);
+    sync_realtime_activity();
+}
+
+/// 有实时会话（原生麦克风/屏幕采集/WebView 语音）时阻止 App Nap 节流；全部结束后释放。
+/// 幂等且可从任意线程调用；token 配对由 active 边沿驱动，避免泄漏重复的 activity。
+pub fn set_realtime_activity(active: bool) {
+    if !active {
+        use std::sync::atomic::Ordering;
+        NATIVE_CAPTURE_ACTIVE.store(false, Ordering::Release);
+        NATIVE_MIC_ACTIVE.store(false, Ordering::Release);
+        VOICE_MIC_ACTIVE.store(false, Ordering::Release);
+    }
+    apply_realtime_activity(active);
 }
 
 /// 设置 Dock 图标角标（未读提示）。空字符串清除角标。

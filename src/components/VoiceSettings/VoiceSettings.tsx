@@ -321,6 +321,11 @@ export const VoiceDevicePanel: React.FC<VoiceDevicePanelProps> = ({ active = tru
                   }
                   setHeadphoneMode(value);
                   setMacHeadphoneMode(value);
+                  // 若当前正在试音，同步以新模式重启试音流，使试音电平条立即反映切换后的信号。
+                  if (testing) {
+                    stopMicTest();
+                    void startMicTest(inputId);
+                  }
                   await webrtcClient.refreshMicrophoneProcessing().catch(() =>
                     message.error(tl('切换失败，请重新开启麦克风使其生效', 'Switch failed; re-enable the microphone to apply')),
                   );
@@ -348,7 +353,8 @@ export const VoiceDevicePanel: React.FC<VoiceDevicePanelProps> = ({ active = tru
                 <Text type="secondary" style={{ fontSize: 12 }}>{`${micGain.toFixed(1)}×`}</Text>
               </div>
               {/* 低延迟模式关掉了平台的自动增益，音量改由这里的软件增益决定。
-                  对方觉得声音小就调大；出现破音/爆音则调小。 */}
+                  setMacMicGain 会通过订阅直接实时修改活动 GainNode.gain.value，
+                  无需重建麦克风流，通话与试音电平条均即时生效。 */}
               <Slider
                 min={MAC_MIC_GAIN_MIN}
                 max={MAC_MIC_GAIN_MAX}
@@ -357,11 +363,6 @@ export const VoiceDevicePanel: React.FC<VoiceDevicePanelProps> = ({ active = tru
                 onChange={value => {
                   setMicGain(value);
                   setMacMicGain(value);
-                }}
-                onChangeComplete={() => {
-                  void webrtcClient
-                    .refreshMicrophoneProcessing()
-                    .catch(() => message.error(tl('应用失败，请重新开启麦克风使其生效', 'Failed to apply; re-enable the microphone to take effect')));
                 }}
               />
               <Text type="secondary" style={{ fontSize: 12 }}>

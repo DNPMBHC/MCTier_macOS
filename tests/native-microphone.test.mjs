@@ -66,12 +66,13 @@ function setup({ native = true, moduleFailure = false, startFailure = null, resu
   } };
   const platformContext = vm.createContext({ exports: {}, navigator: { platform } });
   vm.runInContext(platformCode, platformContext);
-  const context = vm.createContext({ exports: {}, require: path => path.includes('microphoneLevel') ? levelContext.exports : path.includes('macEchoMode') ? { macHeadphoneMode: () => headphoneMode, macMicGain: () => micGain } : path.includes('platform') ? platformContext.exports : path.includes('worklet') || path.includes('Worklet') ? { default: 'worklet.js' } : api,
+  const gainListeners = new Set();
+  const context = vm.createContext({ exports: {}, require: path => path.includes('microphoneLevel') ? levelContext.exports : path.includes('macEchoMode') ? { macHeadphoneMode: () => headphoneMode, macMicGain: () => micGain, subscribeMacMicGain: fn => { gainListeners.add(fn); return () => gainListeners.delete(fn); } } : path.includes('platform') ? platformContext.exports : path.includes('worklet') || path.includes('Worklet') ? { default: 'worklet.js' } : api,
     AudioContext: Context, AudioWorkletNode: Worklet, ArrayBuffer, DOMException, Event, window, console, ...timers,
     navigator: { platform, mediaDevices: { getUserMedia: async options => { browser.push(options); return stream; } } },
   });
   vm.runInContext(code, context);
-  return { api: context.exports, calls, reads, nodes, contexts, browser, graph, track, window };
+  return { api: context.exports, calls, reads, nodes, contexts, browser, graph, gainListeners, track, window };
 }
 test('native enumeration never starts recording; Windows capture never asks the browser', async () => {
   const f = setup();
@@ -317,6 +318,10 @@ test('macOS headphone mode disables every platform audio unit (VPIO) and restore
   assert.equal(f.graph.gains.length, 1, '应创建一个增益节点');
   assert.equal(f.graph.gains[0].gain.value, 4, '增益应等于用户设定的麦克风音量');
   assert.equal(f.graph.compressors, 1, '应有限幅压缩器防止增益后削顶');
+  // 实时拖动滑杆：订阅器直接更新活动 GainNode，无需重建麦克风流。
+  assert.equal(f.gainListeners.size, 1, '应注册实时增益监听器');
+  for (const fn of f.gainListeners) fn(6.5);
+  assert.equal(f.graph.gains[0].gain.value, 6.5, '拖动滑杆应实时更新 GainNode.gain.value');
 });
 
 test('macOS headphone mode preserves the raw stream deviceId and releases capture on stop', async () => {
@@ -327,6 +332,7 @@ test('macOS headphone mode preserves the raw stream deviceId and releases captur
   const track = stream.getAudioTracks()[0];
   assert.equal(track.getSettings().deviceId, '', '原始 mock 轨道无 deviceId，应透传空值而非编造');
   track.stop();
+  assert.equal(f.gainListeners.size, 0, '停止后应注销增益监听器');
   assert.equal(f.track.readyState, 'ended', '停止处理后轨道必须同时停止原始采集');
   assert.equal(f.contexts[0].state, 'closed', '停止后应关闭软件增益的 AudioContext');
 });

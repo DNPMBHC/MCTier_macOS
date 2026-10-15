@@ -187,6 +187,9 @@ impl AppCore {
     pub async fn shutdown(&self) -> Result<(), AppError> {
         info!("正在关闭应用...");
 
+        #[cfg(target_os = "macos")]
+        crate::modules::macos_platform::set_realtime_activity(false);
+
         // 更新状态
         *self.state.lock().await = AppState::Idle;
 
@@ -393,6 +396,8 @@ impl AppCore {
         // Keep read/modify/write in one service guard, even without a core guard.
         match voice_service.set_mic_enabled(new_state).await {
             Ok(state) => {
+                #[cfg(target_os = "macos")]
+                crate::modules::macos_platform::set_voice_mic_activity(state);
                 info!("麦克风状态已切换: {} -> {}", current_state, state);
                 Ok(state)
             }

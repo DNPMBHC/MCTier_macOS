@@ -1058,8 +1058,8 @@ export const MiniWindow: React.FC = () => {
   useEffect(() => {
     if (currentPlayerId && hostMutedPlayers.has(currentPlayerId) && micEnabled) {
       try {
-        // 物理关闭后端麦克风（toggle_mic 当前为开 → 关），处理快捷键绕过的情况
-        invoke('toggle_mic').catch(() => {});
+        // 显式将后端麦克风设为 false（勿调 toggle_mic，否则后端若已为 false 会被反向打开）
+        invoke('set_mic_enabled', { enabled: false }).catch(() => {});
         webrtcClient.setMicEnabled(false);
         useAppStore.getState().setMicEnabled(false);
         message.warning(
