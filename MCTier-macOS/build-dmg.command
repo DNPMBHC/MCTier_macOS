@@ -43,9 +43,10 @@ command -v node >/dev/null 2>&1 || fail '缺少 Node.js'
 command -v npm >/dev/null 2>&1 || fail '缺少 npm'
 command -v cargo >/dev/null 2>&1 || fail '缺少 Rust cargo，请安装 rustup stable toolchain'
 command -v rustc >/dev/null 2>&1 || fail '缺少 Rust rustc，请安装 rustup stable toolchain'
-# 这里刻意不检查 protoc：macOS 链路（build.sh / build-easytier.sh）不依赖
-# protobuf，Cargo.lock 里也没有 prost/tonic。需要 protoc 的是 Windows 侧的
-# scripts/build-easytier-npcap-free.ps1，由该脚本自己报缺。
+# protoc 是 EasyTier 源码构建的前置：easytier 的 build.rs 用 prost-build 编译
+# src/proto/*.proto，缺 protoc 会在 build-easytier.sh 阶段以 Rust error 落地，
+# 与本仓库的 Cargo.lock 无关（那是 EasyTier 自己的依赖）。
+command -v protoc >/dev/null 2>&1 || fail '缺少 protoc，请运行 brew install protobuf'
 
 printf 'MCTier macOS DMG 构建开始\n'
 printf '仓库: %s\n' "${ROOT}"

@@ -64,10 +64,27 @@ jobs:
       # 否则缓存键算错、每次都全量重编译。
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
 
+      # 不用 taiki-e/install-action：它在 windows-2025-vs2026 镜像上有已知的
+      # bash 启动失败（actions/partner-runner-images#169），本次运行就挂在这一步。
+      # 改为直接下载官方 zip 并校验 SHA-256 —— 与本仓库其它第三方获取方式一致。
       - name: Install protoc
-        uses: taiki-e/install-action@1168f6810a3cb30a3514bf5756a3b7f0422c6df8 # v2.87.28
-        with:
-          tool: protoc
+        # EasyTier 的 build.rs 用 prost-build 编译 src/proto/*.proto，缺 protoc
+        # 会让 build-easytier-npcap-free.ps1 在 cargo build 中途失败。
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $version = '28.3'
+          $name = "protoc-$version-win64.zip"
+          $url = "https://github.com/protocolbuffers/protobuf/releases/download/v$version/$name"
+          $expectedSize = 3130793
+          $expectedHash = 'CE64F49BDEDDEF49CE4BD313A8F59BCF92FCF67B5831EFBF66170386D2E66948'
+          $archive = Join-Path $env:RUNNER_TEMP $name
+          Invoke-WebRequest -Uri $url -OutFile $archive -UseBasicParsing
+          if ((Get-Item -LiteralPath $archive).Length -ne $expectedSize) { throw 'protoc 归档大小不匹配' }
+          $actual = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash
+          if ($actual -ne $expectedHash) { throw "protoc 归档 SHA-256 不匹配: $actual" }
+          $dest = Join-Path $env:RUNNER_TEMP 'protoc'
+          Expand-Archive -LiteralPath $archive -DestinationPath $dest -Force
+          "$dest\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
 
       - name: Fetch third-party driver binaries (wintun / WinDivert)
         run: .\scripts\fetch-binaries.ps1
@@ -189,9 +206,13 @@ jobs:
 
       - name: Install build dependencies
         # cmake：turbojpeg-sys 在 macOS 上从源码构建需要。
+        # protobuf：EasyTier 的 build.rs 用 prost-build 编译 src/proto/*.proto，
+        # 缺 protoc 会让下一条 build-easytier.sh 直接失败。注意这不是本仓库
+        # Cargo.lock 的依赖，而是 EasyTier 自己的构建期依赖。
         run: |
           set -eu
           command -v cmake >/dev/null 2>&1 || brew install cmake
+          command -v protoc >/dev/null 2>&1 || brew install protobuf
 
       - name: Build pinned EasyTier macOS binaries
         # EasyTier 不从上游下载预编译产物，一律从固定 commit 源码构建，

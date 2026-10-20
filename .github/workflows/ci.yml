@@ -53,8 +53,22 @@ jobs:
         run: rustfmt --edition 2021 --check src-tauri/src/command_registry.rs src-tauri/src/modules/app_core.rs crates/mctier-core/src/error.rs crates/mctier-core/src/logs.rs src-tauri/src/modules/tauri_commands/logging.rs crates/mctier-platform/src/lib.rs crates/mctier-platform-macos/src/lib.rs crates/mctier-platform-windows/src/lib.rs crates/mctier-platform-linux/src/lib.rs
       - name: Check mctier-core and mctier-platform remain free of raw OS SDK imports
         shell: pwsh
+        # 只检查真正的代码：注释里出现 crate 名字是说明性文字，不是依赖。
+        # （这两处文档注释原文就写着「平台 API（windows / objc2 / webkit2gtk …）」，
+        # 直接全文 grep 会把它们当成违规。）
         run: |
-          $hits = Select-String -Path crates/mctier-core/src/*.rs,crates/mctier-platform/src/*.rs -Pattern '\b(windows::Win32|windows_sys|objc2|core_graphics|core_foundation|webkit2gtk)\b'
+          $hits = Get-ChildItem -Path crates/mctier-core/src/*.rs,crates/mctier-platform/src/*.rs |
+            ForEach-Object {
+              $path = $_.FullName
+              Get-Content -LiteralPath $path | ForEach-Object -Begin { $n = 0 } -Process {
+                $n++
+                $line = $_
+                if ($line -match '^\s*//') { return }
+                if ($line -match '\b(windows::Win32|windows_sys|objc2|core_graphics|core_foundation|webkit2gtk)\b') {
+                  "${path}:${n}:$line"
+                }
+              }
+            }
           if ($hits) {
             $hits | ForEach-Object { Write-Error $_ }
             throw 'Platform SDK imports are forbidden in mctier-core and mctier-platform'
