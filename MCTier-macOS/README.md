@@ -36,6 +36,21 @@ This directory contains the macOS build and native-resource preparation scripts.
 - Microphone capture has a native CoreAudio path, matching the Windows WASAPI one (see below). Native screen capture has a CoreGraphics path (`src-tauri/src/modules/native_capture/macos.rs`) matching the Windows Graphics Capture one: display and window sources, requested-resolution scaling, and the same binary frame packets. macOS requires the user to grant Screen Recording permission first (see below). Recording system audio has a ScreenCaptureKit path on macOS 13+ (see below); older systems need a virtual device such as BlackHole.
 - The traffic-light, Cmd+W/Cmd+Q, multi-monitor restore, Retina sizing, full-screen, portrait/landscape layout switching, microphone capture, and native screen capture behavior require on-device validation.
 
+## Prerequisites
+
+Node.js + npm, a Rust toolchain (`rustup` stable), Xcode Command Line Tools, and
+two Homebrew packages:
+
+```bash
+brew install cmake protobuf
+```
+
+`cmake` is needed because `turbojpeg-sys` builds from source on macOS. `protoc`
+comes from `protobuf` and is needed by EasyTier's own `build.rs`, which runs
+`prost-build` over `src/proto/*.proto` — that dependency belongs to EasyTier, not
+to this repository's `Cargo.lock`, so the DMG build fails at the EasyTier step
+without it.
+
 ## Prepare EasyTier
 
 The default preparation path builds EasyTier from the pinned upstream source commit. It does not guess a release URL or reuse a Linux ELF binary:
