@@ -177,6 +177,6 @@ signing.local.json
 !/.github/ISSUE_TEMPLATE/config.yml
 !/.github/ISSUE_TEMPLATE/feature_request.yml
 !/.github/workflows/ci.yml
-!/.github/workflows/macos-dmg.yml
+!/.github/workflows/build.yml
 # macOS Finder 拖拽 dmg 到脚本目录时产生的元数据文件（无扩展名）
 MCTier-macOS/dmg

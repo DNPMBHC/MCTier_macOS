@@ -43,7 +43,9 @@ command -v node >/dev/null 2>&1 || fail '缺少 Node.js'
 command -v npm >/dev/null 2>&1 || fail '缺少 npm'
 command -v cargo >/dev/null 2>&1 || fail '缺少 Rust cargo，请安装 rustup stable toolchain'
 command -v rustc >/dev/null 2>&1 || fail '缺少 Rust rustc，请安装 rustup stable toolchain'
-command -v protoc >/dev/null 2>&1 || fail '缺少 protoc，请运行 brew install protobuf'
+# 这里刻意不检查 protoc：macOS 链路（build.sh / build-easytier.sh）不依赖
+# protobuf，Cargo.lock 里也没有 prost/tonic。需要 protoc 的是 Windows 侧的
+# scripts/build-easytier-npcap-free.ps1，由该脚本自己报缺。
 
 printf 'MCTier macOS DMG 构建开始\n'
 printf '仓库: %s\n' "${ROOT}"

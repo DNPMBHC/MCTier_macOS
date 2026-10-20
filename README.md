@@ -260,17 +260,36 @@ docker compose -f docker-compose-http.yml logs -f
 ```bash
 npm install
 npm run tauri dev
-# 发布 Windows NSIS 安装包（推荐使用仓库内固定 Node）
-npm run tauri build -- --bundles nsis --ci
 ```
 
-桌面端的发布构建只生成 NSIS 安装包，避免同时生成 MSI 时重复处理离线 WebView2 安装器。仓库中的一键版本更新工具会自动准备固定 Node，并使用相同的 NSIS 参数。
+正式出包请走 GitHub Actions（见下节），本地构建只用于开发验证。
+
+## 打包发布（GitHub Actions）
+
+`.github/workflows/build.yml` 是唯一的正式出包途径，一次出齐四个平台：
+
+| 平台 | 产物 | runner |
+| --- | --- | --- |
+| Windows x64 | NSIS 安装包 `.exe` | `windows-latest` |
+| Linux x64 | `.deb` + `.AppImage` | `ubuntu-24.04` |
+| macOS | `.dmg`（Apple Silicon + Intel 双架构） | `macos-26` / `macos-26-intel` |
+| Android arm64-v8a | `.apk`（debug 签名） | `ubuntu-24.04` |
+
+- 推送到 `master`/`main`：出全部产物，作为 workflow artifact 保存 14 天。
+- 推送 `v*` tag：出全部产物，并自动创建/更新对应的 GitHub Release。
+- 手动触发（workflow_dispatch）：随时出包；填 `release_tag` 则同时附到该 Release。
+
+Release 只在四个平台都有产物时才发布，缺少任一平台即失败，不会留下半成品。
+
+**产物未签名**：Windows 安装包会触发 SmartScreen 提示；Android 是 debug APK，签名与已发布版本不同，**无法覆盖升级**，只能卸载重装。需要可分发产物时按 [docs/release-signing.md](docs/release-signing.md) 在本地/发布机签名。
+
+本地 `npm run tauri build` 仍然可用（如需离线验证打包），但不再是日常流程。
 
 ### 质量检查
 
-GitHub Actions 自动执行前端构建与回归测试、指定 Rust 模块格式检查、Android 构建文件存在性检查、许可证文件检查和 Rust 依赖审计。历史 lint 和依赖审计暂不阻断，需单独查看结果；Rust/Android/Linux 完整构建和真实媒体测试仍需本地验证。CI 不负责签名、打包发布或部署服务器。
+GitHub Actions 自动执行前端构建与回归测试、指定 Rust 模块格式检查、Android 构建文件存在性检查、许可证文件检查和 Rust 依赖审计。历史 lint 和依赖审计暂不阻断，需单独查看结果；Rust/Android/Linux 完整构建和真实媒体测试仍需本地验证。CI 不负责签名与部署服务器。
 
-`.github` 中经审核的 Issue/PR 模板、Dependabot 和 CI 配置允许提交；其他点开头的目录、缓存、密钥和构建产物仍排除。Dependabot 每月分组检查小版本更新，需要人工审查后合并。
+`.github` 中经审核的 Issue/PR 模板、Dependabot、CI 与打包 workflow 允许提交；其他点开头的目录、缓存、密钥和构建产物仍排除。Dependabot 每月分组检查小版本更新，需要人工审查后合并。
 
 提交前可以在本地运行以下前端检查：
 

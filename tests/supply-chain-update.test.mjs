@@ -75,6 +75,30 @@ test('CI actions use immutable sources when a local workflow is present', (t) =>
   assert.match(workflow, /cargo-audit --version 0\.22\.2 --locked/);
   assert.match(workflow, /cargo-deny --version 0\.20\.2 --locked/);
 });
+
+test('every workflow pins actions to immutable commits and keeps tokens off disk', (t) => {
+  const workflows = fs.readdirSync(path.join(root, '.github/workflows'))
+    .filter((name) => name.endsWith('.yml') || name.endsWith('.yaml'));
+  if (workflows.length === 0) {
+    t.skip('Published source intentionally excludes dot-prefixed directories');
+    return;
+  }
+  assert.ok(workflows.includes('build.yml'), 'the all-platform packager must be reviewed here');
+  for (const name of workflows) {
+    const workflow = read(`.github/workflows/${name}`);
+    // 可变的 action 引用（@v1 / @main）会让构建在无人察觉时换掉执行内容。
+    for (const line of workflow.split(/\r?\n/).filter((entry) => entry.includes('uses:'))) {
+      assert.match(line, /@[0-9a-f]{40}/i, `${name}: mutable action reference: ${line}`);
+    }
+    // checkout 默认把 GITHUB_TOKEN 写进 .git/config，后续步骤都能读到。
+    const checkouts = (workflow.match(/uses:\s*actions\/checkout@/g) ?? []).length;
+    assert.equal(
+      (workflow.match(/persist-credentials:\s*false/g) ?? []).length,
+      checkouts,
+      `${name}: every checkout must set persist-credentials: false`,
+    );
+  }
+});
 test('Gradle distribution uses a verified source', () => {
   const wrapper = read('MCTier-Android/gradle/wrapper/gradle-wrapper.properties');
   assert.match(wrapper, /distributionUrl=https\\:\/\/services\.gradle\.org\/distributions\//);

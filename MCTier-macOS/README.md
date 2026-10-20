@@ -134,6 +134,14 @@ system notification center (macOS wording mentions the menu bar icon).
 The native capture path itself has not been validated against live audio yet — only
 device enumeration runs unattended, since it needs no microphone authorization.
 
+## Packaging
+
+Routine packaging happens on GitHub Actions: `.github/workflows/build.yml` builds
+the macOS DMG (Apple Silicon and Intel) together with the Windows, Linux and
+Android packages, either on a `v*` tag or from the "Run workflow" button. Use that
+for anything you intend to distribute. The scripts below are for offline work and
+debugging, and stay the reference for what CI runs.
+
 ## One-click DMG build
 
 For a double-clickable build entry point, grant execute permission once and open
@@ -161,7 +169,9 @@ The lower-level build script remains available for CI and debugging:
 ./MCTier-macOS/scripts/build.sh
 ```
 
-The output is under `src-tauri/target/release/bundle/dmg/` for a DMG build.
+The output is under `target/release/bundle/dmg/` for a DMG build. After the
+workspace refactor the Cargo target directory moved to the repository root, so
+it is no longer `src-tauri/target/release/bundle/dmg/`.
 
 To validate only the Tauri UI/app bundle without EasyTier binaries:
 
