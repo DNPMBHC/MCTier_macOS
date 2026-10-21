@@ -4,6 +4,9 @@ version = "3.10.0"
 description = "MCTier - Minecraft 虚拟局域网联机工具"
 authors = ["MCTier Team"]
 edition = "2021"
+# 与 workspace 内其它 crate 一致：不发布到 crates.io，也不声明 SPDX license
+# （仓库根 LICENSE 是自定义的源码可得非商业协议，没有对应 SPDX 标识符）。
+publish = false
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -67,8 +70,8 @@ tower = "0.4"
 tower-http = { version = "0.5", features = ["fs", "cors", "trace"] }
 async-stream = "0.3"
 # ZIP 压缩
-zip = "2"
-calamine = "0.31"
+zip = "9"
+calamine = "0.37"
 sherpa-onnx = "=1.13.8"
 flate2 = "1"
 hound = "3.5"
@@ -108,7 +111,7 @@ objc2-av-foundation = { version = "0.3.2", features = ["AVCaptureDevice", "AVMed
 mctier-platform-windows = { path = "../crates/mctier-platform-windows" }
 webview2-com = "0.38.2"
 windows-core-webview = { package = "windows-core", version = "0.61" }
-wasapi = "0.23"
+wasapi = "0.25"
 windows = { version = "0.58", features = [
     "Win32_Media_Audio",
     "Foundation",

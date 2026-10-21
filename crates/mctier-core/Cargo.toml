@@ -52,7 +52,7 @@ dashmap = "6"
 parking_lot = "0.12"
 axum = "0.7"
 tower-http = { version = "0.5", features = ["fs", "cors", "trace"] }
-zip = "2"
+zip = "9"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

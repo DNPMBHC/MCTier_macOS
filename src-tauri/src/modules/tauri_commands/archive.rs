@@ -205,18 +205,24 @@ pub(crate) fn extract_zip_archive(
         let entry = archive
             .by_index(i)
             .map_err(|e| format!("读取ZIP条目失败: {}", e))?;
+        // zip 9 起 `ZipFile::name` 返回 Result：文件名可能不是合法 UTF-8/CP437。
+        // 名字解不出来就无法安全判断路径，直接拒绝该归档。
+        let name = entry
+            .name()
+            .map_err(|e| format!("ZIP条目文件名解码失败: {}", e))?
+            .into_owned();
         if entry.is_symlink() {
-            return Err(format!("拒绝ZIP中的符号链接条目: {}", entry.name()));
+            return Err(format!("拒绝ZIP中的符号链接条目: {}", name));
         }
 
-        let (relative_path, key) = safe_zip_entry_path(entry.name())?;
+        let (relative_path, key) = safe_zip_entry_path(&name)?;
         if !seen.insert(key.clone()) {
-            return Err(format!("拒绝ZIP中的重复条目: {}", entry.name()));
+            return Err(format!("拒绝ZIP中的重复条目: {}", name));
         }
 
         let entry_size = entry.size();
         if entry_size > MAX_ZIP_ENTRY_UNCOMPRESSED_BYTES {
-            return Err(format!("ZIP单条目解压大小超过限制: {}", entry.name()));
+            return Err(format!("ZIP单条目解压大小超过限制: {}", name));
         }
         total_uncompressed = total_uncompressed
             .checked_add(entry_size)
@@ -228,7 +234,7 @@ pub(crate) fn extract_zip_archive(
         if !entry.is_dir() {
             files.insert(key.clone());
         }
-        plans.push((i, relative_path, key, entry.is_dir(), entry_size));
+        plans.push((i, relative_path, key, entry.is_dir(), entry_size, name));
     }
 
     // Reject a file used as a parent directory before touching the output.
@@ -250,7 +256,7 @@ pub(crate) fn extract_zip_archive(
     let mut created_files = Vec::new();
     let mut created_dirs = Vec::new();
     let extraction_result: Result<(), String> = (|| {
-        for (index, relative_path, _key, is_dir, entry_size) in plans {
+        for (index, relative_path, _key, is_dir, entry_size, name) in plans {
             let mut entry = archive
                 .by_index(index)
                 .map_err(|e| format!("读取ZIP条目失败: {}", e))?;
@@ -264,7 +270,7 @@ pub(crate) fn extract_zip_archive(
 
             let file_name = relative_path
                 .file_name()
-                .ok_or_else(|| format!("ZIP条目缺少文件名: {}", entry.name()))?;
+                .ok_or_else(|| format!("ZIP条目缺少文件名: {}", name))?;
             let parent_path = relative_path
                 .parent()
                 .unwrap_or_else(|| std::path::Path::new(""));
@@ -296,9 +302,7 @@ pub(crate) fn extract_zip_archive(
             if copied != entry_size {
                 return Err(format!(
                     "ZIP条目实际解压大小与声明不匹配: {} ({} != {})",
-                    entry.name(),
-                    copied,
-                    entry_size
+                    name, copied, entry_size
                 ));
             }
             extracted_files.push(outpath.to_string_lossy().to_string());
