@@ -354,10 +354,31 @@ jobs:
           ((${#files[@]} > 0)) || { echo '没有可附加的产物'; exit 1; }
           # 四个平台家族必须都有产物：Windows / Linux / macOS / Android。
           # 用 always() 进到这个 job 之后，这里才是真正的发布门禁。
-          for pattern in '*.exe' '*.deb' '*.AppImage' '*.dmg' '*.apk'; do
+          for pattern in '*.exe' '*.deb' '*.AppImage' '*.apk'; do
             found=(artifacts/$pattern)
             ((${#found[@]} > 0)) || { echo "缺少产物: $pattern，不发布半成品 Release"; exit 1; }
           done
+          # macOS 要**两个** DMG。Intel 腿挂了 continue-on-error，若只按「至少一个
+          # dmg」判断，Apple Silicon 被 runner 容量挤掉时仍会放行，Release 就只剩
+          # Intel 包 —— 而 Apple Silicon 才是主目标。tauri 的 DMG 名带架构后缀
+          # （<product>_<version>_{aarch64,x64}.dmg），因此这里按后缀分别校验。
+          dmgs=(artifacts/*.dmg)
+          ((${#dmgs[@]} >= 2)) || {
+            echo "需要 aarch64 与 x64 两个 DMG，实际 ${#dmgs[@]} 个: ${dmgs[*]:-无}"
+            exit 1
+          }
+          have_aarch64=0
+          have_x86_64=0
+          for dmg in "${dmgs[@]}"; do
+            case "${dmg}" in
+              *_aarch64.dmg) have_aarch64=1 ;;
+              *_x64.dmg) have_x86_64=1 ;;
+            esac
+          done
+          ((have_aarch64 && have_x86_64)) || {
+            echo "DMG 架构不全（aarch64=${have_aarch64} x64=${have_x86_64}）: ${dmgs[*]}"
+            exit 1
+          }
           # 本 job 不 checkout 仓库，必须显式指定 repo，否则 gh 无法判断目标仓库。
           repo="${{ github.repository }}"
           # Release 不存在时创建（tag 构建通常已由 tag 本身触发创建）。

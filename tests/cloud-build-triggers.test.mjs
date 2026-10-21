@@ -32,6 +32,26 @@ test('云端打包只在 tag 与手动触发时运行，普通 push 不出包', 
   assert.match(workflow, /cancel-in-progress:\s*false/);
 });
 
+test('Release 门禁要求 macOS 两个架构都在，而不是「至少一个 dmg」', () => {
+  const workflow = readLines('.github/workflows/build.yml');
+
+  // Intel 腿挂了 continue-on-error。若只按「至少一个 dmg」放行，Apple Silicon
+  // 被 runner 容量挤掉时 Release 仍会创建，但只剩 Intel 包 —— 而 aarch64 才是
+  // 主目标。这里锁住「两个架构分别校验」这条性质。
+  assert.match(workflow, /\*_aarch64\.dmg/, '应识别 aarch64 DMG 后缀');
+  assert.match(workflow, /\*_x64\.dmg/, '应识别 x64 DMG 后缀');
+  assert.match(workflow, /have_aarch64/, '应有 aarch64 命中标记');
+  assert.match(workflow, /have_x86_64/, '应有 x64 命中标记');
+  assert.match(
+    workflow,
+    /\(\(have_aarch64 && have_x86_64\)\)/,
+    '两个架构必须同时命中才放行',
+  );
+  // tauri 的 DMG 命名是 <product>_<version>_<arch>.dmg，所以后缀判断才成立。
+  // 一旦升级 tauri 改了命名，这条断言会先失败，提醒同步门禁逻辑。
+  assert.match(workflow, /dmgs\[@\]/, '应按数组遍历实际 DMG 文件');
+});
+
 test('本地触发脚本存在，且三种入口都指向同一个 workflow', () => {
   for (const scriptPath of [
     'scripts/build-cloud.command',

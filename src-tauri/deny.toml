@@ -19,11 +19,11 @@ ignore = [
     "RUSTSEC-2026-0368",
     "RUSTSEC-2026-0369",
 
-    # webpki-roots 0.26.11：链路 ureq 2.12.1 → sherpa-onnx-sys（构建期），
-    # 用同一份校验过的官方归档，不访问任意第三方站点。ureq 2.x 锁定 ^0.26，
-    # 而公告的修复只在 1.0.10+ 的 1.x 线上，0.26 线整体无法修复；
-    # 升级需要 sherpa-onnx 自己换到 ureq 3.x。
-    "RUSTSEC-2026-0381",
+    # 注意：RUSTSEC-2026-0381（webpki-roots 的 emSign 中间证书）**不需要**豁免。
+    # 该公告把 "= 0.26.11" 明确列为 unaffected、把 ">= 1.0.10" 列为 patched，
+    # 而我们锁里正好是这两个版本（0.26.11 供 ureq 2.x / 1.0.10 供其余），
+    # 没有任何 crate 落在受影响区间。此前在这里写豁免会产生一条
+    # advisory-not-detected 警告，已删除。
 
     # ---- 上游锁定版本，等上游 ----
     # fxhash：链路 tauri-utils → kuchikiki → selectors，Tauri 构建期处理 CSS
