@@ -266,7 +266,7 @@ npm run tauri dev
 
 ## 打包发布（GitHub Actions）
 
-`.github/workflows/build.yml` 是唯一的正式出包途径，一次出齐四个平台：
+`.github/workflows/build.yml` 是唯一的出包途径，一次出齐四个平台：
 
 | 平台 | 产物 | runner |
 | --- | --- | --- |
@@ -275,15 +275,44 @@ npm run tauri dev
 | macOS | `.dmg`（Apple Silicon + Intel 双架构） | `macos-26` / `macos-26-intel` |
 | Android arm64-v8a | `.apk`（debug 签名） | `ubuntu-24.04` |
 
-- 推送到 `master`/`main`：出全部产物，作为 workflow artifact 保存 14 天。
-- 推送 `v*` tag：出全部产物，并自动创建/更新对应的 GitHub Release。
-- 手动触发（workflow_dispatch）：随时出包；填 `release_tag` 则同时附到该 Release。
+### 什么时候会自动打包
 
-Release 只在四个平台都有产物时才发布，缺少任一平台即失败，不会留下半成品。
+**只有推 `v*` tag 时**。日常提交（push 到 master）不会触发打包——那会跑满 5 个
+job、约 20 分钟并占用 macOS runner 配额，不值得每次提交都付出。
 
-**产物未签名**：Windows 安装包会触发 SmartScreen 提示；Android 是 debug APK，签名与已发布版本不同，**无法覆盖升级**，只能卸载重装。需要可分发产物时按 [docs/release-signing.md](docs/release-signing.md) 在本地/发布机签名。
+```bash
+git tag v3.11.0 && git push macos-fork v3.11.0    # 自动出全平台包并建 Release
+```
 
-本地 `npm run tauri build` 仍然可用（如需离线验证打包），但不再是日常流程。
+### 平时怎么出包：本地脚本触发云端
+
+脚本**不打包**，只是让 GitHub Actions 去打（`workflow_dispatch`），产物留在 Actions 页面。
+
+```bash
+# macOS / Linux
+./scripts/build-cloud.command                  # 触发一次
+./scripts/build-cloud.command --watch          # 触发并跟到结束，成功后下载到 dist-cloud/
+./scripts/build-cloud.command --release-tag v3.10.0   # 触发并附到该 Release
+```
+
+Windows 双击仓库根的 `构建云端包.bat`，或：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\build-cloud.ps1 -Watch
+```
+
+`--push-tag` / `-PushTag` 会打 tag 走自动路径，但**只对 `x.0.0` 这种大版本放行**，
+避免小改动随手占用一次全矩阵；确实要为小版本发版时加 `--force` / `-Force`。
+
+### 发布门禁
+
+Release job 会按平台家族逐个校验产物，四个平台缺任何一个即失败，不会留下半成品。
+
+**产物未签名**：Windows 安装包会触发 SmartScreen 提示；Android 是 debug APK，
+签名与已发布版本不同，**无法覆盖升级**，只能卸载重装。需要可分发产物时按
+[docs/release-signing.md](docs/release-signing.md) 在本地/发布机签名。
+
+本地 `npm run tauri build` 仍可用于离线验证单个平台，但不再是日常流程。
 
 ### 质量检查
 

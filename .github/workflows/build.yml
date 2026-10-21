@@ -1,20 +1,22 @@
 name: Build
 
-# 全平台自动打包：这是 MCTier 唯一的正式出包途径，日常不再需要本地打包。
+# 全平台自动打包。
 #
 # 触发方式：
-#   - push 到 master/main：出全部平台的产物（workflow artifact），用于日常验证。
 #   - push 形如 v* 的 tag：出全部平台，并自动创建/更新对应 GitHub Release 并附加产物。
-#   - workflow_dispatch：手动随时出包；填了 release_tag 就同时附到该 Release。
+#     这是**唯一**的自动触发路径。
+#   - workflow_dispatch：手动出包。用 scripts/build-cloud.command（macOS/Linux）
+#     或 scripts/build-cloud.bat（Windows）触发，也可以直接在网页上点。
+#     填了 release_tag 就把产物附到该 Release。
 #
-# 刻意不在 PR 上运行：整套矩阵（5 个 job）耗时约 20 分钟，PR 的常规检查由 ci.yml 承担。
+# 刻意**不**在 push 到分支时运行：那会让每次提交都跑 5 个 job、约 20 分钟的矩阵
+# 并占用 macOS runner 配额。日常验证用本地脚本按需触发。PR 的常规检查由 ci.yml 承担。
 #
 # 产物未签名。Windows 安装包会触发 SmartScreen 提示；Android 为 debug APK，
 # 因签名与已发布版本不同，无法覆盖升级，只能卸载重装。正式分发需要签名时，
 # 请参见 docs/release-signing.md 的本地/发布机流程。
 on:
   push:
-    branches: [master, main]
     tags: ['v*']
   workflow_dispatch:
     inputs:
@@ -26,10 +28,12 @@ on:
 permissions:
   contents: read
 
-# 打包耗时且产物重要：只允许 push 触发的运行被新推送取消。
+# 打包耗时且产物重要：tag 推送的构建绝不能被新推送取消。
+# 手动触发的运行同样不取消（每次都是显式请求），只取消同一 ref 上重复的手动运行
+# 并不安全——所以这里统一不取消。
 concurrency:
   group: build-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'push' && !startsWith(github.ref, 'refs/tags/') }}
+  cancel-in-progress: false
 
 env:
   # husky 的 install hook 在 CI 里没有意义
