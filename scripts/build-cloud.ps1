@@ -1,4 +1,4 @@
-# 手动触发云端全平台打包（Windows PowerShell 5.1 及以上）。
+﻿# 手动触发云端全平台打包（Windows PowerShell 5.1 及以上）。
 #
 # 这个脚本**不打包**，它只是让 GitHub Actions 去打：调用 build.yml 的
 # workflow_dispatch，由云端出 Windows / Linux / macOS(双架构) / Android 四套产物。

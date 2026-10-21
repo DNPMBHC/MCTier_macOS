@@ -7,18 +7,26 @@ import { fileURLToPath } from 'node:url';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const read = (relativePath) => fs.readFileSync(path.join(root, relativePath), 'utf8');
 
+/**
+ * 按行结构断言的文本读取。
+ *
+ * CI 的 frontend job 跑在 windows-latest 上，checkout 出来的 *.yml 是 CRLF。
+ * 直接在正则里写 `\n` 会在那边全部失配（本地 macOS/Linux 是 LF，所以看不出来）。
+ * 这里统一归一成 LF，断言只关心行结构，不关心行尾。
+ */
+const readLines = (relativePath) => read(relativePath).replace(/\r\n/g, '\n');
+
 test('云端打包只在 tag 与手动触发时运行，普通 push 不出包', () => {
-  const workflow = read('.github/workflows/build.yml');
+  const workflow = readLines('.github/workflows/build.yml');
 
   // 普通 push 到分支会跑满 5 个 job、约 20 分钟并占用 macOS runner 配额。
   // 出包改为按需触发：推 v* tag 自动，其余走本地脚本的 workflow_dispatch。
-  assert.match(workflow, /^on:\s*$/m);
   const onBlock = /^on:\n([\s\S]*?)\npermissions:/m.exec(workflow);
   assert.ok(onBlock, 'build.yml 应该有 on: 块');
-  assert.match(onBlock[1], /^\s{2}push:\n\s{4}tags:/m, 'push 只按 tags 触发');
-  assert.doesNotMatch(onBlock[1], /^\s{4}branches:/m, 'push 不应再按分支触发');
-  assert.match(onBlock[1], /^\s{2}workflow_dispatch:/m, '必须保留手动触发');
-  assert.doesNotMatch(onBlock[1], /^\s{2}pull_request:/m, 'PR 由 ci.yml 负责');
+  assert.match(onBlock[1], /^ {2}push:\n {4}tags:/m, 'push 只按 tags 触发');
+  assert.doesNotMatch(onBlock[1], /^ {4}branches:/m, 'push 不应再按分支触发');
+  assert.match(onBlock[1], /^ {2}workflow_dispatch:/m, '必须保留手动触发');
+  assert.doesNotMatch(onBlock[1], /^ {2}pull_request:/m, 'PR 由 ci.yml 负责');
 
   // tag 推送的构建不能被后续推送取消，否则会丢掉 Release 的产物。
   assert.match(workflow, /cancel-in-progress:\s*false/);
@@ -77,7 +85,8 @@ test('本地脚本默认推到能写 Actions 的 fork，而不是只有拉取权
     assert.match(source, /origin/, `${name} 应把 origin 作为回退`);
   }
   // 下载目录要与 .gitignore 的忽略项一致，避免把几 GB 产物加进版本库。
-  const ignore = read('.gitignore');
+  // .gitignore 在 Windows 检出同样是 CRLF，所以这里也必须归一后再匹配行首尾。
+  const ignore = readLines('.gitignore');
   assert.match(ignore, /^dist-cloud$/m, '.gitignore 应忽略 dist-cloud 下载目录');
   assert.match(sh, /dist-cloud/, 'shell 版下载到 dist-cloud');
   assert.match(ps1, /dist-cloud/, 'ps1 版下载到 dist-cloud');
